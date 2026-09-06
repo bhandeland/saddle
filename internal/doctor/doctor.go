@@ -37,6 +37,35 @@ func ParseListeners(lsofOutput string) []string {
 	return out
 }
 
+// decideCanaryAndListenerResults returns the Results for "can run containers"
+// (if service is not OK) and "host services exposed" checks based on whether
+// the container service is running and the lsof output or error.
+func decideCanaryAndListenerResults(serviceOK bool, lsofErr error, lsofOutput string) []Result {
+	var rs []Result
+
+	if !serviceOK {
+		rs = append(rs, Result{Name: "can run containers", OK: false,
+			Detail: "skipped: the container service is not running",
+			Fix:    "container system start, then re-run saddle doctor"})
+	}
+
+	if lsofErr != nil {
+		rs = append(rs, Result{Name: "host services exposed", OK: false,
+			Detail: "could not enumerate listeners: " + lsofErr.Error(),
+			Fix:    "ensure lsof is available, or check manually with: lsof -nP -iTCP -sTCP:LISTEN"})
+	} else {
+		if exposed := ParseListeners(lsofOutput); len(exposed) > 0 {
+			rs = append(rs, Result{Name: "host services exposed", OK: false,
+				Detail: "reachable from saddle sessions: " + strings.Join(exposed, ", "),
+				Fix:    "bind these to 127.0.0.1, or accept that sessions can reach them"})
+		} else {
+			rs = append(rs, Result{Name: "host services exposed", OK: true})
+		}
+	}
+
+	return rs
+}
+
 func Run(ctx context.Context) []Result {
 	var rs []Result
 
@@ -47,23 +76,28 @@ func Run(ctx context.Context) []Result {
 	}
 	rs = append(rs, Result{Name: "container installed", OK: true})
 
+	var serviceOK bool
 	if out, err := exec.CommandContext(ctx, "container", "system", "status").CombinedOutput(); err != nil {
 		rs = append(rs, Result{Name: "container service", OK: false,
 			Detail: strings.TrimSpace(string(out)), Fix: "container system start"})
+		serviceOK = false
 	} else {
 		rs = append(rs, Result{Name: "container service", OK: true})
+		serviceOK = true
 	}
 
 	// A canary run is the only reliable check that a kernel is configured;
 	// the missing-kernel failure only surfaces when starting a container.
-	canary := exec.CommandContext(ctx, "container", "run", "--rm",
-		"docker.io/library/alpine:3.20", "true")
-	if out, err := canary.CombinedOutput(); err != nil {
-		rs = append(rs, Result{Name: "can run containers", OK: false,
-			Detail: strings.TrimSpace(string(out)),
-			Fix:    "container system kernel set --recommended"})
-	} else {
-		rs = append(rs, Result{Name: "can run containers", OK: true})
+	if serviceOK {
+		canary := exec.CommandContext(ctx, "container", "run", "--rm",
+			"docker.io/library/alpine:3.20", "true")
+		if out, err := canary.CombinedOutput(); err != nil {
+			rs = append(rs, Result{Name: "can run containers", OK: false,
+				Detail: strings.TrimSpace(string(out)),
+				Fix:    "container system kernel set --recommended"})
+		} else {
+			rs = append(rs, Result{Name: "can run containers", OK: true})
+		}
 	}
 
 	tok := exec.CommandContext(ctx, "security", "find-generic-password",
@@ -76,15 +110,8 @@ func Run(ctx context.Context) []Result {
 	}
 
 	lsof := exec.CommandContext(ctx, "lsof", "-nP", "-iTCP", "-sTCP:LISTEN")
-	if out, err := lsof.Output(); err == nil {
-		if exposed := ParseListeners(string(out)); len(exposed) > 0 {
-			rs = append(rs, Result{Name: "host services exposed", OK: false,
-				Detail: "reachable from saddle sessions: " + strings.Join(exposed, ", "),
-				Fix:    "bind these to 127.0.0.1, or accept that sessions can reach them"})
-		} else {
-			rs = append(rs, Result{Name: "host services exposed", OK: true})
-		}
-	}
+	out, lsofErr := lsof.Output()
+	rs = append(rs, decideCanaryAndListenerResults(serviceOK, lsofErr, string(out))...)
 
 	return rs
 }
