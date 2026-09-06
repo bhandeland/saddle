@@ -7,12 +7,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/brandon/saddle/internal/auth"
 	"github.com/brandon/saddle/internal/config"
 	"github.com/brandon/saddle/internal/egress"
+	"github.com/brandon/saddle/internal/hostsvc"
 	"github.com/brandon/saddle/internal/macos"
 	"github.com/brandon/saddle/internal/profile"
 	"github.com/brandon/saddle/internal/render"
@@ -111,6 +113,63 @@ func SkillMounts(home string, skills []string) []runtime.Mount {
 	return out
 }
 
+// SpawnReadyTimeout bounds how long a spawned host service has to bind.
+// A var, not a const, so tests need not wait it out.
+var SpawnReadyTimeout = 30 * time.Second
+
+// startSpawned starts every carried-in MCP server that declares a spawn
+// command, and does not return until each is accepting connections.
+//
+// Waiting is the point. The egress proxy binds synchronously, so nothing can
+// race it; a child process does not, and a container started before the
+// server binds gives the agent an MCP server that does not exist. A session
+// that looks contained and memory-backed but is only the first of those is
+// exactly what saddle refuses to produce, so a server that never binds fails
+// `up` rather than being shrugged off.
+//
+// The profile must already have been expanded: these arguments carry the
+// session gateway.
+func startSpawned(p profile.Profile, timeout time.Duration) ([]*hostsvc.Proc, []Spawned, error) {
+	var procs []*hostsvc.Proc
+	var rec []Spawned
+
+	fail := func(err error) ([]*hostsvc.Proc, []Spawned, error) {
+		for _, pr := range procs {
+			_ = pr.Kill()
+		}
+		return nil, nil, err
+	}
+
+	// Map iteration order is random; sort so a failure is reproducible and
+	// two runs of the same profile start servers in the same order.
+	names := make([]string, 0, len(p.CarryIn.MCP))
+	for name := range p.CarryIn.MCP {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		m := p.CarryIn.MCP[name]
+		if len(m.Spawn) == 0 {
+			continue
+		}
+		addr, err := hostsvc.AddrFromURL(m.URL)
+		if err != nil {
+			return fail(fmt.Errorf("carry_in.mcp.%s: %w", name, err))
+		}
+		pr, err := hostsvc.Start(m.Spawn)
+		if err != nil {
+			return fail(fmt.Errorf("carry_in.mcp.%s: %w", name, err))
+		}
+		procs = append(procs, pr)
+		if err := hostsvc.WaitReady(addr, timeout); err != nil {
+			return fail(fmt.Errorf("carry_in.mcp.%s: %w", name, err))
+		}
+		rec = append(rec, Spawned{Name: name, PID: pr.PID, Cmd: pr.Cmd})
+	}
+	return procs, rec, nil
+}
+
 // Up creates a contained session and attaches to it.
 func Up(ctx context.Context, o UpOptions) (State, error) {
 	if o.NoNet && o.OpenNet {
@@ -142,6 +201,7 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		netCreated     bool
 		netName        string
 		px             *egress.Proxy
+		spawned        []*hostsvc.Proc
 		containerID    string
 	)
 	ok := false
@@ -160,6 +220,9 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		defer cancel()
 		if containerID != "" {
 			_ = runtime.Remove(cleanupCtx, runtime.Handle{ID: containerID})
+		}
+		for _, pr := range spawned {
+			_ = pr.Kill()
 		}
 		if px != nil {
 			px.Close()
@@ -258,7 +321,20 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	p = profile.Expand(p, map[string]string{
 		"gateway":    n.Gateway,
 		"proxy_port": proxyPort,
+		"repo":       filepath.Base(o.Repo),
 	})
+
+	// 6b. Host services the profile asks for, before the container so that
+	// nothing races their bind. See startSpawned for why this waits.
+	//
+	// `spawned` is the ladder variable declared above, so this assigns
+	// rather than declares: a `:=` here would shadow it and the unwind
+	// would kill nothing.
+	var spawnedRec []Spawned
+	spawned, spawnedRec, err = startSpawned(p, SpawnReadyTimeout)
+	if err != nil {
+		return State{}, err
+	}
 
 	// 7. MCP config, mounted read-only so it never dirties the worktree.
 	mcpHost := filepath.Join(sessDir, "mcp.json")
@@ -318,7 +394,8 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	st := State{
 		Name: name, Profile: p.Name, Repo: o.Repo, Worktree: wtPath,
 		Branch: "saddle/" + branch, Network: netName, Container: h.ID,
-		ProxyAddr: proxyAddr, Egress: egressSummary(o.OpenNet, o.NoNet, allow),
+		ProxyAddr: proxyAddr, Spawned: spawnedRec,
+		Egress: egressSummary(o.OpenNet, o.NoNet, allow),
 		Status: "running", Created: time.Now().UTC(),
 	}
 	if err := Save(st); err != nil {
@@ -326,12 +403,15 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	}
 	ok = true
 
-	// The unwind above is disarmed, so nothing else will close the proxy on
-	// an early return from here down. Its lifetime should not rest on the
-	// process exiting.
+	// The unwind above is disarmed, so nothing else will close the proxy or
+	// kill spawned host services on an early return from here down. Their
+	// lifetime should not rest on the process exiting.
 	defer func() {
 		if px != nil {
 			px.Close()
+		}
+		for _, pr := range spawned {
+			_ = pr.Kill()
 		}
 	}()
 
@@ -474,6 +554,17 @@ func Down(ctx context.Context, name string, force bool) error {
 	}
 
 	_ = runtime.DeleteNetwork(ctx, st.Network)
+
+	// Children of the `up` process. Normally already dead, because `up`
+	// kills them on the way out; this catches a survivor of a crashed `up`.
+	// Reap refuses to kill a pid whose command no longer matches, so a
+	// recycled pid is never mistaken for our child.
+	for _, s := range st.Spawned {
+		if err := hostsvc.Reap(s.PID, s.Cmd); err != nil && !force {
+			return err
+		}
+	}
+
 	if err := worktree.Remove(ctx, st.Repo, st.Worktree); err != nil && !force {
 		return err
 	}

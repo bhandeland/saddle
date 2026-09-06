@@ -11,15 +11,26 @@ import (
 	"time"
 )
 
+// Spawned records a host-side child process started for this session, so a
+// later `saddle down` - a different process from the `up` that started it -
+// can reap a survivor of a crashed `up`. Cmd is recorded alongside Pid
+// because a pid on its own is reused and is not identity.
+type Spawned struct {
+	Name string   `json:"name"`
+	PID  int      `json:"pid"`
+	Cmd  []string `json:"cmd"`
+}
+
 type State struct {
-	Name      string `json:"name"`
-	Profile   string `json:"profile"`
-	Repo      string `json:"repo"`
-	Worktree  string `json:"worktree"`
-	Branch    string `json:"branch"`
-	Network   string `json:"network"`
-	Container string `json:"container"`
-	ProxyAddr string `json:"proxy_addr"`
+	Name      string    `json:"name"`
+	Profile   string    `json:"profile"`
+	Repo      string    `json:"repo"`
+	Worktree  string    `json:"worktree"`
+	Branch    string    `json:"branch"`
+	Network   string    `json:"network"`
+	Container string    `json:"container"`
+	ProxyAddr string    `json:"proxy_addr"`
+	Spawned   []Spawned `json:"spawned"`
 	// Egress records the containment posture the session was created with:
 	// "open" (no filtering), "none" (all denied), or a short allowlist
 	// summary. Written down rather than inferred, because the only other
