@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,7 +27,10 @@ func ProfilesDir() (string, error) {
 
 // LoadProfiles reads every .yaml file in dir, sorted by profile name so
 // detection is deterministic. A missing directory yields no profiles rather
-// than an error, because a fresh install has none.
+// than an error, because a fresh install has none. A profile that fails to
+// read or parse is skipped with a warning on stderr rather than aborting the
+// whole load, so a typo in one unrelated profile does not block every
+// `saddle up`.
 func LoadProfiles(dir string) ([]profile.Profile, error) {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -42,11 +46,13 @@ func LoadProfiles(dir string) ([]profile.Profile, error) {
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
-			return nil, err
+			fmt.Fprintf(os.Stderr, "saddle: skipping invalid profile %s: %v\n", e.Name(), err)
+			continue
 		}
 		p, err := profile.Parse(data)
 		if err != nil {
-			return nil, err
+			fmt.Fprintf(os.Stderr, "saddle: skipping invalid profile %s: %v\n", e.Name(), err)
+			continue
 		}
 		out = append(out, p)
 	}

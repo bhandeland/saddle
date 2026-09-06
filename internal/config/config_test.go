@@ -29,13 +29,22 @@ func TestLoadProfilesReadsAllYAMLSortedByName(t *testing.T) {
 	}
 }
 
-func TestLoadProfilesErrorsOnInvalidProfile(t *testing.T) {
+func TestLoadProfilesSkipsInvalidProfileAndKeepsOthers(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "bad.yaml"), []byte("image: alpine\n"), 0o644); err != nil {
-		t.Fatal(err)
+	write := func(file, body string) {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := LoadProfiles(dir); err == nil {
-		t.Fatal("expected error for profile with no name")
+	write("good.yaml", "name: good\nimage: alpine\n")
+	write("bad.yaml", "image: alpine\n") // no name
+
+	got, err := LoadProfiles(dir)
+	if err != nil {
+		t.Fatalf("one bad profile must not fail the load: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "good" {
+		t.Fatalf("got %+v, want just the good profile", got)
 	}
 }
 

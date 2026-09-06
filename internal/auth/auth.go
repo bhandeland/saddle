@@ -14,6 +14,12 @@ const service = "saddle-claude-token"
 
 // Store writes or replaces the token. -U updates an existing item rather than
 // failing on a duplicate.
+//
+// The token is passed as a -w argument, which means it appears in the
+// process table (e.g. `ps`) for the lifetime of this call, visible to other
+// local processes. This is inherent to security(1): add-generic-password
+// offers no stdin-based alternative for supplying the password. The
+// exposure is local-only and brief.
 func Store(token string) error {
 	cmd := exec.Command("security", "add-generic-password",
 		"-U", "-s", service, "-a", "saddle", "-w", token)
