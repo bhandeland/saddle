@@ -97,8 +97,12 @@ func cmdLs(ctx context.Context) error {
 		return err
 	}
 	// Reconcile against reality: a container may have died behind saddle's
-	// back, leaving a state file that still says running.
-	if alive, err := runtime.Running(ctx); err == nil {
+	// back, leaving a state file that still says running. If we can't check,
+	// say so rather than silently showing possibly-stale statuses.
+	alive, err := runtime.Running(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "saddle: could not reconcile against running containers, statuses may be stale: %v\n", err)
+	} else {
 		states = session.Reconcile(states, alive)
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
