@@ -1,6 +1,10 @@
 package profile
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestParseReadsAllFields(t *testing.T) {
 	p, err := Parse([]byte(`
@@ -173,5 +177,46 @@ carry_in:
 	}
 	if p.CarryIn.MCP["other"].Spawn != nil {
 		t.Fatal("expected no spawn")
+	}
+}
+
+func TestTheREADMEExampleProfileParses(t *testing.T) {
+	// The README is the only profile in the repository. If its spawn line
+	// drifts from `remem serve`'s actual flags, every new user's first
+	// session fails.
+	data, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body, ok := strings.Cut(string(data), "profiles/go.yaml <<'YAML'\n")
+	if !ok {
+		t.Fatal("could not find the example profile in README.md")
+	}
+	body, _, ok = strings.Cut(body, "\n    YAML")
+	if !ok {
+		t.Fatal("unterminated example profile in README.md")
+	}
+	// The heredoc sits inside a fenced code block in the README, so every
+	// line carries a 4-space indent for readers. Strip it before parsing;
+	// the README's formatting is not the thing under test.
+	var lines []string
+	for _, line := range strings.Split(body, "\n") {
+		lines = append(lines, strings.TrimPrefix(line, "    "))
+	}
+	body = strings.Join(lines, "\n")
+
+	p, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("README example does not parse: %v", err)
+	}
+	spawn := p.CarryIn.MCP["remem"].Spawn
+	if len(spawn) == 0 || spawn[0] != "remem" {
+		t.Fatalf("README example lost its remem spawn: %v", spawn)
+	}
+	out := Expand(p, map[string]string{"gateway": "10.0.0.1", "repo": "r", "proxy_port": "1"})
+	for _, a := range out.CarryIn.MCP["remem"].Spawn {
+		if strings.Contains(a, "{{") {
+			t.Fatalf("unexpanded placeholder in %q", a)
+		}
 	}
 }

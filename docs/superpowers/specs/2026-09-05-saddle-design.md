@@ -211,29 +211,30 @@ in as an endpoint URL. Everything else stays out unless a profile names it.
 Profile string values support substitution of session-scoped values that are
 not known until the container exists: `{{gateway}}` is the host address the
 container can reach, and `{{proxy_port}}` is the port the egress proxy bound
-to. Those are the only two. A carried-in MCP server's own port is written
-literally by the profile author, because saddle does not start that server and
-cannot know its port.
+to. Those are the only two. A carried-in MCP server's port is written literally
+by the profile author. saddle can now start such a server - see
+`carry_in.mcp.<name>.spawn` and `2026-09-06-remem-http-transport-design.md` -
+but a fixed port needs no negotiating, because each session's gateway is a
+distinct address.
 
 ### remem
 
 remem is in the default profile, **read-write**. Contained sessions record work
 like any other session.
 
-remem is a macOS arm64 binary with its store in
-`~/Library/Application Support/remem`, so it cannot be mounted into a Linux
-container. `remem serve` is **stdio only** as of 2026-09-05. remem uses the
+remem is a macOS arm64 binary, so it cannot itself be mounted into a Linux
+container. `remem serve` was **stdio only** as of 2026-09-05. remem uses the
 official `mcp` Python SDK 2.1.1, which already ships streamable-HTTP transport,
-so serving it over a port is a transport swap rather than a rewrite.
+so serving it over a port was a transport swap rather than a rewrite.
 
-**That change belongs in remem, not saddle**, and is deferred. It benefits every
-remote or containerized agent. Until it lands, saddle points at a shim; after it
-lands, saddle points at remem itself. saddle's side is one profile field either
-way, so this does not block the first slice.
+**Resolved.** That change landed in remem, and saddle carries it in over HTTP -
+see `carry_in.mcp.<name>.spawn` above and
+`2026-09-06-remem-http-transport-design.md`.
 
-Not serving from a mounted store is deliberate: the agent never gets raw file
-access to the knowledge base, and there is exactly one writer to the SQLite
-database rather than a host process and a container process racing.
+remem's store is Postgres (`session.py` connects with psycopg to a configured
+DSN), reachable from the host but not from the container. The container never
+gets file access to the knowledge base, and concurrent writers are Postgres's
+ordinary business.
 
 Accepted risk: a session running with permissions off, reading potentially
 untrusted repo or web content, can write to the permanent knowledge store. The

@@ -43,3 +43,23 @@ hand:
 - [ ] `saddle down <name>` on a clean session: confirm it tears down
       without needing `--force`.
 - [ ] `saddle ls` after the above: confirm no stale entries remain.
+
+## Carried-in remem over HTTP
+
+- [ ] `saddle up` on a repo whose profile carries remem in. From inside the
+      session, call `recall` and confirm results come back.
+- [ ] From inside the session, write an entry with no explicit `project`.
+      On the host, confirm it filed under the repository's name and not under
+      the directory `saddle up` was run from. This is the silent failure the
+      pinned project exists to prevent, so check it rather than assume it.
+- [ ] Confirm the entry's session id is null rather than the launching
+      shell's.
+- [ ] `saddle down`, then `ps ax | grep 'remem serve'` - no survivor.
+- [ ] Kill the `saddle up` process with SIGKILL rather than exiting cleanly,
+      so the child is orphaned. Then `saddle down` and confirm it reaps the
+      orphan.
+- [ ] Two sessions at once on different repos: confirm both remem servers
+      bind :9100 on their own gateways without colliding, and that each files
+      entries under its own project.
+- [ ] A profile whose `spawn` names a nonexistent binary fails `saddle up`
+      with a clear error and leaves no network, worktree, or container behind.
