@@ -26,19 +26,36 @@ func Auto() Mode {
 	return ModeTerminal
 }
 
+// shellQuote renders s as a single POSIX shell word. cmux's --command value is
+// typed into an interactive shell, so every element must survive shell parsing
+// as exactly one argument.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // CmuxArgs builds the cmux invocation that opens a workspace running argv.
 func CmuxArgs(name, cwd string, argv []string) []string {
+	var quoted []string
+	for _, arg := range argv {
+		quoted = append(quoted, shellQuote(arg))
+	}
 	return []string{
 		"new-workspace",
 		"--name", name,
 		"--cwd", cwd,
-		"--command", strings.Join(argv, " "),
+		"--command", strings.Join(quoted, " "),
 	}
 }
 
 // Attach runs the session. In terminal mode saddle inherits stdio and the
-// container allocates the TTY, so no PTY library is required.
+// container allocates the TTY, so no PTY library is required. Terminal mode
+// blocks until the session exits and propagates the exit status; cmux mode
+// returns immediately when the workspace is created and cannot report whether
+// the session inside succeeded.
 func Attach(ctx context.Context, m Mode, name, cwd string, argv []string) error {
+	if len(argv) == 0 {
+		return fmt.Errorf("render: empty argv")
+	}
 	switch m {
 	case ModeCmux:
 		out, err := exec.CommandContext(ctx, "cmux", CmuxArgs(name, cwd, argv)...).CombinedOutput()
