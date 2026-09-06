@@ -43,6 +43,14 @@ func Dir() (string, error) {
 }
 
 func path(name string) (string, error) {
+	// Validate name to prevent path traversal attacks.
+	// Reject: empty, contains path separators, equals . or .., or differs from Base.
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid session name %q", name)
+	}
+	if filepath.Base(name) != name {
+		return "", fmt.Errorf("invalid session name %q: contains path separators", name)
+	}
 	d, err := Dir()
 	if err != nil {
 		return "", err
@@ -99,7 +107,9 @@ func List() ([]State, error) {
 		}
 		s, err := Load(e.Name()[:len(e.Name())-len(".json")])
 		if err != nil {
-			continue // a corrupt file must not hide healthy sessions
+			// Skip corrupt/unreadable files but warn
+			fmt.Fprintf(os.Stderr, "saddle: skipping unreadable session file %s: %v\n", e.Name(), err)
+			continue
 		}
 		out = append(out, s)
 	}

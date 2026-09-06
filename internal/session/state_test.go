@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -75,5 +76,32 @@ func TestReconcileDoesNotMutateInput(t *testing.T) {
 	_ = Reconcile(in, map[string]bool{})
 	if in[0].Status != "running" {
 		t.Fatal("Reconcile mutated its input")
+	}
+}
+
+func TestSaveRejectsNameWithPathSeparator(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := Save(State{Name: "../escape", Status: "running"}); err == nil {
+		t.Fatal("Save succeeded with path traversal name")
+	}
+	// Verify no file was created outside the sessions dir
+	d, _ := Dir()
+	entries, _ := os.ReadDir(d)
+	if len(entries) > 0 {
+		t.Fatalf("File created with traversal name: %v", entries)
+	}
+}
+
+func TestDeleteRejectsTraversalName(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := Delete("../../etc/passwd"); err == nil {
+		t.Fatal("Delete succeeded with traversal name")
+	}
+}
+
+func TestLoadRejectsTraversalName(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if _, err := Load("../escape"); err == nil {
+		t.Fatal("Load succeeded with traversal name")
 	}
 }
