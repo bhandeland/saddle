@@ -91,6 +91,14 @@ func WaitReady(addr string, timeout time.Duration) error {
 // file that may be old. Without this check, tearing down a stale session
 // could kill an unrelated process of the user's.
 //
+// The identity check compares ps's rendering of the live process's command
+// line against strings.Join(cmd, " "), and that join is not injective over
+// argv: []string{"foo", "a b"} and []string{"foo a", "b"} both render as
+// "foo a b", so a maliciously or accidentally reshaped argv could in
+// principle collide with the recorded one. The failure direction is safe
+// either way: if ps errors (pid gone, or any other failure reading it), Reap
+// returns nil without killing anything.
+//
 // A pid that is already gone is not an error; that is the ordinary case.
 func Reap(pid int, cmd []string) error {
 	if pid <= 0 {
@@ -111,13 +119,23 @@ func Reap(pid int, cmd []string) error {
 	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}
-	// If this process happens to be pid's parent - as in the case where Kill
-	// was never called and the same process that started it is reaping it
-	// directly - collect it so it does not linger as a zombie. Down is
-	// ordinarily a different process than the one that spawned the child, in
-	// which case pid has no living parent to wait on it and this call simply
-	// fails; the kernel reparents it to init, which reaps it instead.
+	// Reap does not require that the caller be pid's parent - ordinarily it
+	// is not, since Down runs in a different process than the one that
+	// spawned the child, and the kernel reparents pid to init, which reaps
+	// it. But if the caller does happen to be the parent (as in a test that
+	// calls Start and Reap in the same process), a blocking wait4 here could
+	// hang forever on a process stuck in uninterruptible sleep, where
+	// SIGKILL does not take effect immediately. So poll non-blockingly for a
+	// bounded number of short waits instead of waiting unboundedly: this
+	// collects the child promptly in the common in-process case without
+	// ever risking hanging saddle down.
 	var ws syscall.WaitStatus
-	_, _ = syscall.Wait4(pid, &ws, 0, nil)
+	for i := 0; i < 20; i++ {
+		wpid, werr := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)
+		if werr != nil || wpid != 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	return nil
 }
