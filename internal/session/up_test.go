@@ -2,11 +2,15 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/brandon/saddle/internal/profile"
 	"github.com/brandon/saddle/internal/render"
@@ -285,4 +289,127 @@ func TestPrintSummaryFlagsOpenEgressAndNamedProfile(t *testing.T) {
 	if !strings.Contains(out, "go (named)") {
 		t.Fatalf("an explicitly named profile must say so:\n%s", out)
 	}
+}
+
+func TestStartSpawnedRunsNothingWhenNoServerDeclaresSpawn(t *testing.T) {
+	p := profile.Profile{CarryIn: profile.CarryIn{MCP: map[string]profile.MCP{
+		"other": {URL: "http://127.0.0.1:9100/mcp"},
+	}}}
+	procs, rec, err := startSpawned(p, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(procs) != 0 || len(rec) != 0 {
+		t.Fatalf("started something: %v %v", procs, rec)
+	}
+}
+
+func TestStartSpawnedWaitsForTheServerToBind(t *testing.T) {
+	port := freePort(t)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	p := profile.Profile{CarryIn: profile.CarryIn{MCP: map[string]profile.MCP{
+		"fake": {
+			URL: "http://" + addr + "/mcp",
+			// A listener that binds and holds, with no dependence on which
+			// netcat macOS ships. Started as a child exactly as a real
+			// server would be.
+			Spawn: listenerCmd(port),
+		},
+	}}}
+
+	procs, rec, err := startSpawned(p, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		for _, pr := range procs {
+			_ = pr.Kill()
+		}
+	}()
+
+	if len(procs) != 1 {
+		t.Fatalf("want 1 process, got %d", len(procs))
+	}
+	if len(rec) != 1 || rec[0].Name != "fake" || rec[0].PID != procs[0].PID {
+		t.Fatalf("bad record %+v", rec)
+	}
+}
+
+func TestStartSpawnedFailsWhenTheServerNeverBinds(t *testing.T) {
+	port := freePort(t)
+	p := profile.Profile{CarryIn: profile.CarryIn{MCP: map[string]profile.MCP{
+		"fake": {
+			URL:   fmt.Sprintf("http://127.0.0.1:%d/mcp", port),
+			Spawn: []string{"sleep", "30"},
+		},
+	}}}
+
+	procs, _, err := startSpawned(p, 300*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a readiness failure")
+	}
+	if len(procs) != 0 {
+		t.Fatal("a failed start must leave nothing running")
+	}
+}
+
+func TestStartSpawnedFailsWhenTheBinaryIsMissing(t *testing.T) {
+	p := profile.Profile{CarryIn: profile.CarryIn{MCP: map[string]profile.MCP{
+		"fake": {
+			URL:   "http://127.0.0.1:9100/mcp",
+			Spawn: []string{"saddle-no-such-binary-xyz"},
+		},
+	}}}
+	if _, _, err := startSpawned(p, time.Second); err == nil {
+		t.Fatal("expected an error for a missing binary")
+	}
+}
+
+func TestStartSpawnedRejectsASpawnWithNoUsableURL(t *testing.T) {
+	// spawn without a port to poll cannot be waited on, and a server that is
+	// started but never checked is exactly the silent half-working state the
+	// design refuses.
+	p := profile.Profile{CarryIn: profile.CarryIn{MCP: map[string]profile.MCP{
+		"fake": {URL: "http://127.0.0.1/mcp", Spawn: []string{"sleep", "30"}},
+	}}}
+	if _, _, err := startSpawned(p, time.Second); err == nil {
+		t.Fatal("expected an error for a URL with no port")
+	}
+}
+
+func TestStateRoundTripsSpawnedProcesses(t *testing.T) {
+	st := State{
+		Name: "saddle-x", Repo: "/r", Worktree: "/w", Branch: "b",
+		Spawned: []Spawned{{Name: "remem", PID: 4242, Cmd: []string{"remem", "serve"}}},
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back State
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Spawned) != 1 || back.Spawned[0].PID != 4242 ||
+		back.Spawned[0].Cmd[0] != "remem" {
+		t.Fatalf("bad round trip: %+v", back.Spawned)
+	}
+}
+
+// listenerCmd binds port and sleeps, standing in for a spawned MCP server.
+func listenerCmd(port int) []string {
+	return []string{"python3", "-c",
+		"import socket,time;s=socket.socket();" +
+			"s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);" +
+			"s.bind(('127.0.0.1'," + strconv.Itoa(port) + "));s.listen();time.sleep(30)"}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }

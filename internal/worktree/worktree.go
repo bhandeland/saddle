@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -38,4 +39,35 @@ func IsDirty(ctx context.Context, dest string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(out) != "", nil
+}
+
+// RepoName names the repository dir belongs to, by the same rule remem uses
+// to resolve a project.
+//
+// remem's resolve_project asks git for --git-common-dir and names the
+// directory holding it, so a subdirectory of a repository and a linked
+// worktree of it both resolve to the *main* repository's name. Deriving the
+// name any other way - filepath.Base of the path handed to `saddle up`, say -
+// would silently disagree with remem for exactly those two cases, and a
+// session that files its memories under a project name nobody queries is
+// worse than one that files none: the writes succeed and never surface.
+//
+// A path that is not in a repository, or a machine with no usable git, falls
+// back to the base name of dir. This never fails: a name saddle cannot
+// improve on is not a reason to refuse to start a session.
+func RepoName(ctx context.Context, dir string) string {
+	out, err := git(ctx, dir, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return filepath.Base(dir)
+	}
+	common := strings.TrimSpace(out)
+	if common == "" {
+		return filepath.Base(dir)
+	}
+	// git answers relative to the directory it ran in (plain ".git" at a
+	// repository root), so resolve against dir before taking the parent.
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(dir, common)
+	}
+	return filepath.Base(filepath.Dir(filepath.Clean(common)))
 }

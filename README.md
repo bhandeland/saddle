@@ -39,7 +39,13 @@ per file:
         - proxy.golang.org
         - sum.golang.org
     carry_in:
-      skills: [superpowers]
+      skills: [remem, superpowers]
+      mcp:
+        remem:
+          spawn: ["remem", "serve", "--http",
+                  "--host", "{{gateway}}", "--port", "9100",
+                  "--project", "{{repo}}"]
+          url: http://{{gateway}}:9100/mcp
     YAML
 
 `detect` lists filenames; a profile matches when any of them is present at
@@ -47,8 +53,25 @@ the top of the repository, which is what lets `saddle up` choose without
 `--profile`. `egress.allow` is the whole allowlist - matching is exact and
 case-insensitive on the hostname, with no wildcards, and everything else is
 denied. `carry_in.skills` names directories under `~/.claude/skills`, which
-are mounted read-only. String values may use `{{gateway}}` and
-`{{proxy_port}}`, which are substituted once the session's network exists.
+are mounted read-only. String values may use `{{gateway}}`, `{{proxy_port}}`,
+and `{{repo}}`, which are substituted once the session's network exists.
+`{{repo}}` is the name of the repository the session was opened on, resolved
+the way git resolves it - a subdirectory or a linked worktree both name the
+main repository - so a memory server carried in files its writes under the
+same project the host would.
+
+`carry_in.mcp.<name>.spawn` is the host command that serves that endpoint.
+saddle runs it once the session network exists, waits for the address in
+`url` to accept connections, and kills it when the session ends. A server
+with only a `url` is assumed to be running already.
+
+`spawn` runs a host command, outside the container, as you. That is not a new
+trust boundary - a profile already chooses the container image and the bind
+mounts - but it is worth knowing before you copy a profile from someone else.
+
+If the command does not exist, or nothing is listening within 30 seconds,
+`saddle up` fails. A session whose memory server silently is not there is
+worse than one that refuses to start.
 
 ## Quick start
 
