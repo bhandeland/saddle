@@ -2,8 +2,11 @@ package hostsvc
 
 import (
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,7 +98,7 @@ func TestReapKillsAMatchingProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Kill()
-	if err := Reap(p.PID, p.Cmd); err != nil {
+	if err := Reap(p.PID, p.Cmd, p.Line); err != nil {
 		t.Fatal(err)
 	}
 	if err := exec.Command("kill", "-0", itoa(p.PID)).Run(); err == nil {
@@ -112,17 +115,68 @@ func TestReapRefusesWhenTheCommandDoesNotMatch(t *testing.T) {
 	}
 	defer p.Kill()
 
-	if err := Reap(p.PID, []string{"some-other-command"}); err == nil {
-		t.Fatal("expected Reap to refuse a mismatched command")
+	// A mismatch is not an error: it says our child is already gone, which is
+	// the ordinary teardown outcome. Returning an error here used to abort
+	// `saddle down` after the container and network were gone but before the
+	// worktree and state file were, leaving a session only --force could
+	// remove - and --force also skips the uncommitted-changes guard.
+	if err := Reap(p.PID, []string{"some-other-command"}, "some-other-command"); err != nil {
+		t.Fatalf("expected a mismatch to be reported as nothing to do, got %v", err)
 	}
 	if err := exec.Command("kill", "-0", itoa(p.PID)).Run(); err != nil {
 		t.Fatal("Reap killed a process whose command did not match")
 	}
 }
 
+func TestStartAndReapHandleAShebangScript(t *testing.T) {
+	// The regression this package exists to avoid. Exec'ing a shebang script
+	// makes the kernel rewrite argv: it drops the caller's argv[0] and
+	// prepends the interpreter, so the live command line is not the argv we
+	// asked for. remem - the one command this feature was written to run - is
+	// such a script, so matching on the joined argv alone matched nothing.
+	dir := t.TempDir()
+	script := filepath.Join(dir, "sleeper.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 20\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Start([]string{script})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Kill()
+
+	if p.Line == strings.Join(p.Cmd, " ") {
+		t.Fatalf("expected the observed line to differ from the argv, both were %q", p.Line)
+	}
+	if !strings.Contains(p.Line, script) {
+		t.Fatalf("observed line %q does not mention %q", p.Line, script)
+	}
+
+	if err := Reap(p.PID, p.Cmd, p.Line); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("kill", "-0", itoa(p.PID)).Run(); err == nil {
+		t.Fatal("Reap did not kill a shebang script it started")
+	}
+}
+
+func TestStartRecordsTheObservedCommandLine(t *testing.T) {
+	// For a plain binary the observed line and the joined argv agree, so
+	// state written before Line existed still matches.
+	p, err := Start([]string{"sleep", "30"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Kill()
+	if p.Line != strings.Join(p.Cmd, " ") {
+		t.Fatalf("got %q, want %q", p.Line, strings.Join(p.Cmd, " "))
+	}
+}
+
 func TestReapOnAPidThatIsGoneIsNotAnError(t *testing.T) {
 	// Teardown of an already-dead child is the normal case, not a failure.
-	if err := Reap(999999, []string{"sleep", "30"}); err != nil {
+	if err := Reap(999999, []string{"sleep", "30"}, "sleep 30"); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }

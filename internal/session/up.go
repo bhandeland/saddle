@@ -165,7 +165,7 @@ func startSpawned(p profile.Profile, timeout time.Duration) ([]*hostsvc.Proc, []
 		if err := hostsvc.WaitReady(addr, timeout); err != nil {
 			return fail(fmt.Errorf("carry_in.mcp.%s: %w", name, err))
 		}
-		rec = append(rec, Spawned{Name: name, PID: pr.PID, Cmd: pr.Cmd})
+		rec = append(rec, Spawned{Name: name, PID: pr.PID, Cmd: pr.Cmd, Line: pr.Line})
 	}
 	return procs, rec, nil
 }
@@ -553,17 +553,22 @@ func Down(ctx context.Context, name string, force bool) error {
 		return fmt.Errorf("container %s could not be removed", st.Container)
 	}
 
-	_ = runtime.DeleteNetwork(ctx, st.Network)
-
 	// Children of the `up` process. Normally already dead, because `up`
 	// kills them on the way out; this catches a survivor of a crashed `up`.
 	// Reap refuses to kill a pid whose command no longer matches, so a
 	// recycled pid is never mistaken for our child.
+	//
+	// Before DeleteNetwork, matching the order Up's unwind uses: a spawned
+	// server is bound to the session gateway, so deleting the network first
+	// would pull that address out from under the process we are about to
+	// identify.
 	for _, s := range st.Spawned {
-		if err := hostsvc.Reap(s.PID, s.Cmd); err != nil && !force {
+		if err := hostsvc.Reap(s.PID, s.Cmd, s.Line); err != nil && !force {
 			return err
 		}
 	}
+
+	_ = runtime.DeleteNetwork(ctx, st.Network)
 
 	if err := worktree.Remove(ctx, st.Repo, st.Worktree); err != nil && !force {
 		return err

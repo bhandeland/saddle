@@ -21,8 +21,8 @@ type Egress struct {
 }
 
 type MCP struct {
-	URL   string   `yaml:"url"`
-	Tools string   `yaml:"tools"`
+	URL   string `yaml:"url"`
+	Tools string `yaml:"tools"`
 	// Spawn is the host command that serves this endpoint, run by saddle
 	// once the session gateway exists. Optional: a server with only a URL is
 	// assumed to be running already.

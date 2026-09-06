@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -20,9 +21,18 @@ import (
 )
 
 // Proc is a running child.
+//
+// Cmd is the argv we asked for; Line is the command line the kernel actually
+// ended up with, as ps renders it. The two differ whenever something rewrites
+// argv, and the case that matters here is the shebang: exec'ing a script
+// drops the caller's argv[0] and prepends the interpreter, so a script
+// started as "remem serve --http" shows up as
+// ".../Python .../remem serve --http". Recording only the argv we asked for
+// would mean the identity check in Reap could never match a script.
 type Proc struct {
-	PID int
-	Cmd []string
+	PID  int
+	Cmd  []string
+	Line string
 
 	cmd *exec.Cmd
 }
@@ -40,7 +50,41 @@ func Start(argv []string) (*Proc, error) {
 	if err := c.Start(); err != nil {
 		return nil, fmt.Errorf("hostsvc: start %s: %w", argv[0], err)
 	}
-	return &Proc{PID: c.Process.Pid, Cmd: append([]string(nil), argv...), cmd: c}, nil
+	return &Proc{
+		PID:  c.Process.Pid,
+		Cmd:  append([]string(nil), argv...),
+		Line: observeLine(c.Process.Pid),
+		cmd:  c,
+	}, nil
+}
+
+// psLine returns the command line ps reports for pid, or "" if it cannot be
+// read (the usual reason being that pid is gone).
+func psLine(pid int) string {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// observeLine reads the command line the child settled on, or "" if it never
+// became readable.
+//
+// This races the exec. Between fork and exec the child is a copy of us and
+// still shows *our* command line, so a reading equal to our own is treated as
+// "not yet" and retried. The wait is bounded and short: a failure to observe
+// falls back to the argv we asked for rather than failing the spawn, because
+// a child that started is worth more than a perfect record of it.
+func observeLine(pid int) string {
+	self := psLine(os.Getpid())
+	for i := 0; i < 20; i++ {
+		if line := psLine(pid); line != "" && line != self {
+			return line
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return ""
 }
 
 // Kill terminates the child and reaps it, so it does not linger as a zombie.
@@ -85,36 +129,39 @@ func WaitReady(addr string, timeout time.Duration) error {
 	}
 }
 
-// Reap kills pid, but only if its command line still matches cmd.
+// Reap kills pid, but only if its command line still identifies it as the
+// child we started.
 //
 // A pid on its own is not identity: pids are reused, and Down acts on a state
 // file that may be old. Without this check, tearing down a stale session
 // could kill an unrelated process of the user's.
 //
-// The identity check compares ps's rendering of the live process's command
-// line against strings.Join(cmd, " "), and that join is not injective over
-// argv: []string{"foo", "a b"} and []string{"foo a", "b"} both render as
-// "foo a b", so a maliciously or accidentally reshaped argv could in
-// principle collide with the recorded one. The failure direction is safe
-// either way: if ps errors (pid gone, or any other failure reading it), Reap
-// returns nil without killing anything.
+// The check compares ps's rendering of the live process's command line
+// against two accepted forms: line, the rendering observed at Start (empty
+// when it could not be read), and strings.Join(argv, " "). Either counts.
+// That join is not injective over argv - []string{"foo", "a b"} and
+// []string{"foo a", "b"} both render as "foo a b" - so a reshaped argv could
+// in principle collide with the recorded one.
 //
-// A pid that is already gone is not an error; that is the ordinary case.
-func Reap(pid int, cmd []string) error {
+// Neither a pid that is gone nor a pid that no longer matches is an error.
+// Both are evidence that our child is not there any more, which is the
+// ordinary outcome of teardown; reporting them as failures would strand
+// `saddle down` mid-teardown and push the user onto --force, which also
+// bypasses the uncommitted-changes guard. A mismatch is worth a word on
+// stderr, though, since it means a recorded pid now belongs to someone else.
+// A non-nil error here means we tried to act and could not.
+func Reap(pid int, argv []string, line string) error {
 	if pid <= 0 {
 		return nil
 	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
-	if err != nil {
+	running := psLine(pid)
+	if running == "" {
 		return nil // no such process
 	}
-	running := strings.TrimSpace(string(out))
-	if running == "" {
+	if running != line && running != strings.Join(argv, " ") {
+		fmt.Fprintf(os.Stderr, "saddle: pid %d is now %q, not %q; leaving it alone\n",
+			pid, running, strings.Join(argv, " "))
 		return nil
-	}
-	if running != strings.Join(cmd, " ") {
-		return fmt.Errorf("hostsvc: pid %d is now %q, not %q; refusing to kill",
-			pid, running, strings.Join(cmd, " "))
 	}
 	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
