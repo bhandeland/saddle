@@ -21,8 +21,12 @@ type Egress struct {
 }
 
 type MCP struct {
-	URL   string `yaml:"url"`
-	Tools string `yaml:"tools"`
+	URL   string   `yaml:"url"`
+	Tools string   `yaml:"tools"`
+	// Spawn is the host command that serves this endpoint, run by saddle
+	// once the session gateway exists. Optional: a server with only a URL is
+	// assumed to be running already.
+	Spawn []string `yaml:"spawn"`
 }
 
 type CarryIn struct {
@@ -98,6 +102,16 @@ func Expand(p Profile, vars map[string]string) Profile {
 		m := make(map[string]MCP, len(p.CarryIn.MCP))
 		for name, s := range p.CarryIn.MCP {
 			s.URL = r.Replace(s.URL)
+			if s.Spawn != nil {
+				// A fresh slice: the caller's Profile must not be mutated, and a
+				// shared backing array would let one session's gateway leak into
+				// another's arguments.
+				spawn := make([]string, len(s.Spawn))
+				for i, a := range s.Spawn {
+					spawn[i] = r.Replace(a)
+				}
+				s.Spawn = spawn
+			}
 			m[name] = s
 		}
 		out.CarryIn.MCP = m

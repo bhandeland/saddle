@@ -105,3 +105,73 @@ func TestExpandDoesNotMutateInput(t *testing.T) {
 		t.Fatal("Expand mutated its input")
 	}
 }
+
+func TestSpawnParses(t *testing.T) {
+	p, err := Parse([]byte(`
+name: go
+carry_in:
+  mcp:
+    remem:
+      spawn: ["remem", "serve", "--http", "--host", "{{gateway}}"]
+      url: http://{{gateway}}:9100/mcp
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := p.CarryIn.MCP["remem"].Spawn
+	want := []string{"remem", "serve", "--http", "--host", "{{gateway}}"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("arg %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestExpandRewritesSpawnArgs(t *testing.T) {
+	p := Profile{CarryIn: CarryIn{MCP: map[string]MCP{"remem": {
+		URL:   "http://{{gateway}}:9100/mcp",
+		Spawn: []string{"remem", "serve", "--host", "{{gateway}}", "--project", "{{repo}}"},
+	}}}}
+	out := Expand(p, map[string]string{"gateway": "192.168.64.3", "repo": "saddle"})
+
+	got := out.CarryIn.MCP["remem"].Spawn
+	want := []string{"remem", "serve", "--host", "192.168.64.3", "--project", "saddle"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("arg %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+	if out.CarryIn.MCP["remem"].URL != "http://192.168.64.3:9100/mcp" {
+		t.Fatalf("url not expanded: %q", out.CarryIn.MCP["remem"].URL)
+	}
+}
+
+func TestExpandDoesNotMutateTheInputSpawn(t *testing.T) {
+	// Expand returns a copy. A shared backing array would let one session's
+	// gateway leak into another profile value.
+	orig := []string{"remem", "--host", "{{gateway}}"}
+	p := Profile{CarryIn: CarryIn{MCP: map[string]MCP{"remem": {Spawn: orig}}}}
+	Expand(p, map[string]string{"gateway": "192.168.64.3"})
+	if orig[2] != "{{gateway}}" {
+		t.Fatalf("input mutated: %q", orig[2])
+	}
+}
+
+func TestProfileWithURLAndNoSpawnIsValid(t *testing.T) {
+	p, err := Parse([]byte(`
+name: go
+carry_in:
+  mcp:
+    other:
+      url: http://{{gateway}}:7000/mcp
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.CarryIn.MCP["other"].Spawn != nil {
+		t.Fatal("expected no spawn")
+	}
+}
