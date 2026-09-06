@@ -193,7 +193,7 @@ carry_in:
   skills: [remem, superpowers]
   mcp:
     remem:
-      url: http://{{gateway}}:{{remem_port}}/mcp
+      url: http://{{gateway}}:9100/mcp
       tools: read-write
   ssh_agent: false
 ```
@@ -204,9 +204,10 @@ in as an endpoint URL. Everything else stays out unless a profile names it.
 
 Profile string values support substitution of session-scoped values that are
 not known until the container exists: `{{gateway}}` is the host address the
-container can reach, and `{{remem_port}}` is the port saddle bound the remem
-endpoint to. Substitution happens after `Create` returns and before the
-container's MCP config is written.
+container can reach, and `{{proxy_port}}` is the port the egress proxy bound
+to. Those are the only two. A carried-in MCP server's own port is written
+literally by the profile author, because saddle does not start that server and
+cannot know its port.
 
 ### remem
 
