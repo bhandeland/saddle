@@ -20,6 +20,22 @@ hand:
 - [ ] Egress: from inside the session, confirm a request to a
       non-allowlisted host is denied, and a request to a host passed via
       `--allow` (or present in the profile) succeeds.
+- [ ] Egress, *no second route out*: the check above only exercises the
+      proxy, and would still pass if the container had another way to the
+      internet. So verify the containment claim directly: inside the
+      session, unset `HTTPS_PROXY` and `HTTP_PROXY` and confirm a direct
+      connection to a public address fails - by IP as well as by name, e.g.
+      `curl --max-time 10 https://1.1.1.1/` and
+      `curl --max-time 10 https://example.com/`. Both must fail. A success
+      means the isolation is not holding and no allowlist is meaningful.
+- [ ] `--open-net`: bring a session up with `--open-net` and confirm the
+      warning is printed, that unrestricted internet access genuinely works
+      from inside it, and that `saddle ls` flags the session's EGRESS
+      column conspicuously (`OPEN(!)`) so it cannot be mistaken for a
+      contained one.
+- [ ] `--no-net`: bring a session up with `--no-net` and confirm all egress
+      is denied - through the proxy and directly - and that `saddle ls`
+      shows its egress as `none`.
 - [ ] `saddle down <name>` on a session with uncommitted changes in its
       worktree: confirm it refuses and explains why, and that `--force`
       then proceeds and tears everything down (container, network, state
