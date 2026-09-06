@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/brandon/saddle/internal/auth"
 	"github.com/brandon/saddle/internal/config"
 	"github.com/brandon/saddle/internal/egress"
+	"github.com/brandon/saddle/internal/macos"
 	"github.com/brandon/saddle/internal/profile"
 	"github.com/brandon/saddle/internal/render"
 	"github.com/brandon/saddle/internal/runtime"
@@ -115,6 +117,14 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		return State{}, fmt.Errorf("--no-net and --open-net are mutually exclusive")
 	}
 
+	// The containment rests on `--internal` network behaviour that was only
+	// ever verified on macOS 26. Below the floor saddle would be running an
+	// agent with permission prompting disabled behind isolation nobody has
+	// checked, so refuse rather than guess.
+	if _, err := macos.CheckFloor(); err != nil {
+		return State{}, err
+	}
+
 	// Resources are acquired one at a time below. ok is disarmed (set true)
 	// as soon as Save persists the session, which is the point at which
 	// `saddle down` becomes able to find and tear down everything created so
@@ -205,8 +215,8 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	sessDir = filepath.Join(stateDir, name+".d")
-	if err := os.MkdirAll(sessDir, 0o700); err != nil {
+	sessDir, err = claimSessionDir(stateDir, name)
+	if err != nil {
 		return State{}, err
 	}
 	sessDirCreated = true
@@ -229,13 +239,13 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	// 5. Egress proxy bound to the gateway. --open-net means no filtering at
 	// all, so no proxy is started: a listening proxy nobody uses is just a
 	// stray port and a leaked goroutine.
+	allow := append([]string{}, p.Egress.Allow...)
+	allow = append(allow, o.ExtraAllow...)
+	if o.NoNet || o.OpenNet {
+		allow = nil
+	}
 	var proxyAddr, proxyPort string
 	if !o.OpenNet {
-		allow := append([]string{}, p.Egress.Allow...)
-		allow = append(allow, o.ExtraAllow...)
-		if o.NoNet {
-			allow = nil
-		}
 		px = egress.New(allow)
 		proxyAddr, err = px.Listen(n.Gateway + ":0")
 		if err != nil {
@@ -308,17 +318,35 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	st := State{
 		Name: name, Profile: p.Name, Repo: o.Repo, Worktree: wtPath,
 		Branch: "saddle/" + branch, Network: netName, Container: h.ID,
-		ProxyAddr: proxyAddr, Status: "running", Created: time.Now().UTC(),
+		ProxyAddr: proxyAddr, Egress: egressSummary(o.OpenNet, o.NoNet, allow),
+		Status: "running", Created: time.Now().UTC(),
 	}
 	if err := Save(st); err != nil {
 		return State{}, err
 	}
 	ok = true
 
+	// The unwind above is disarmed, so nothing else will close the proxy on
+	// an early return from here down. Its lifetime should not rest on the
+	// process exiting.
+	defer func() {
+		if px != nil {
+			px.Close()
+		}
+	}()
+
 	mode := o.Render
 	if mode == "" {
 		mode = render.Auto()
 	}
+
+	// Tell the operator what was actually decided. Without this the
+	// generated session name is never shown (so `saddle down` has no
+	// argument to be given), and a profile skipped for being malformed —
+	// which only warns on stderr — silently puts a different profile's
+	// allowlist in force with nothing to correlate against.
+	printSummary(os.Stdout, st, p, o.ProfileName != "", allow, mode)
+
 	if err := render.Attach(ctx, mode, name, wtPath, h.AttachArgv); err != nil {
 		return st, err
 	}
@@ -332,10 +360,29 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 			return st, err
 		}
 	}
-	if px != nil {
-		px.Close()
-	}
 	return st, nil
+}
+
+// printSummary writes the post-creation summary described by the design
+// spec: what was resolved, where the work lives, and how much of the
+// internet the session can reach.
+func printSummary(w io.Writer, st State, p profile.Profile, named bool, allow []string, mode render.Mode) {
+	how := "detected"
+	if named {
+		how = "named"
+	}
+	egressLine := strings.Join(allow, ", ") + "  (all else denied)"
+	switch st.Egress {
+	case "open":
+		egressLine = "OPEN - no filtering at all"
+	case "none":
+		egressLine = "none  (all egress denied)"
+	}
+	fmt.Fprintf(w, "  session   %s\n", st.Name)
+	fmt.Fprintf(w, "  profile   %s (%s)\n", p.Name, how)
+	fmt.Fprintf(w, "  worktree  %s  [branch %s]\n", st.Worktree, st.Branch)
+	fmt.Fprintf(w, "  egress    %s\n", egressLine)
+	fmt.Fprintf(w, "  attach    %s\n", mode)
 }
 
 // waitForExit blocks until the container has appeared as running and then,
@@ -445,19 +492,56 @@ func Down(ctx context.Context, name string, force bool) error {
 	return Delete(name)
 }
 
+// claimSessionDir creates the per-session directory under stateDir and
+// returns its path. It uses os.Mkdir, not os.MkdirAll: MkdirAll succeeds on
+// a directory that already exists, which would let a colliding --name adopt
+// a live session's directory and then delete it — worktree and all — when
+// the caller's cleanup unwind fires on the next failure. An existing
+// directory is therefore a hard error, raised before anything is acquired.
+func claimSessionDir(stateDir, name string) (string, error) {
+	dir := filepath.Join(stateDir, name+".d")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		if os.IsExist(err) {
+			return "", fmt.Errorf("session %q already exists; pick another --name or run `saddle down %s`", name, name)
+		}
+		return "", err
+	}
+	return dir, nil
+}
+
+// egressSummary describes a session's containment posture in a few
+// characters, for the state file and the `saddle ls` table. It is short on
+// purpose: an operator with several sessions must be able to answer "which
+// of these is uncontained?" at a glance.
+func egressSummary(openNet, noNet bool, allow []string) string {
+	switch {
+	case openNet:
+		return "open"
+	case noNet || len(allow) == 0:
+		return "none"
+	case len(allow) == 1:
+		return allow[0]
+	default:
+		return fmt.Sprintf("%s +%d", allow[0], len(allow)-1)
+	}
+}
+
 // sessionCleanupDir returns the session directory to remove for a session's
 // worktree path, and whether removing it is safe. An empty worktree path is
 // refused outright: filepath.Dir("") is ".", and blindly removing that
 // would delete the current working directory. The candidate directory must
-// also fall under saddle's state directory, so nothing outside saddle's own
-// control is ever touched.
+// also fall STRICTLY under saddle's state directory, so nothing outside
+// saddle's own control is ever touched. Equality with the state directory is
+// refused outright: a session directory is always one level below it, so a
+// candidate equal to it means the worktree path was malformed, and removing
+// it would wipe every other session's directory too.
 func sessionCleanupDir(stateDir, worktreePath string) (string, bool) {
 	if worktreePath == "" {
 		return "", false
 	}
 	dir := filepath.Clean(filepath.Dir(worktreePath))
 	base := filepath.Clean(stateDir)
-	if dir != base && !strings.HasPrefix(dir, base+string(filepath.Separator)) {
+	if !strings.HasPrefix(dir, base+string(filepath.Separator)) {
 		return "", false
 	}
 	return dir, true

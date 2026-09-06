@@ -2,11 +2,14 @@ package session
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/brandon/saddle/internal/profile"
+	"github.com/brandon/saddle/internal/render"
 )
 
 // nameRE pins the SessionName allowlist: lower-case ASCII letters and
@@ -147,5 +150,139 @@ func TestMCPConfigEmptyWhenNoServers(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "mcpServers") {
 		t.Fatalf("expected an mcpServers key even when empty: %s", data)
+	}
+}
+
+// A colliding --name must not be able to adopt a live session's directory:
+// os.MkdirAll would have succeeded on an existing directory, after which
+// the caller's cleanup unwind would delete the running session's worktree
+// and uncommitted work.
+func TestClaimSessionDirRefusesExistingDirectory(t *testing.T) {
+	stateDir := t.TempDir()
+
+	dir, err := claimSessionDir(stateDir, "repo-fix")
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	live := filepath.Join(dir, "worktree", "uncommitted.txt")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte("work in progress"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := claimSessionDir(stateDir, "repo-fix"); err == nil {
+		t.Fatal("second claim on an existing session directory must fail")
+	} else if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error should name the collision, got %v", err)
+	}
+
+	// The failed claim must leave the live session entirely alone.
+	data, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatalf("failed claim removed the live session's worktree: %v", err)
+	}
+	if string(data) != "work in progress" {
+		t.Fatalf("live session content changed: %q", data)
+	}
+}
+
+func TestClaimSessionDirCreatesDirectoryPrivately(t *testing.T) {
+	stateDir := t.TempDir()
+	dir, err := claimSessionDir(stateDir, "repo-fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(stateDir, "repo-fix.d"); dir != want {
+		t.Fatalf("got %q want %q", dir, want)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("session directory mode %o, want 700", perm)
+	}
+}
+
+// A session directory always sits strictly below the state directory. A
+// candidate equal to it means the worktree path was malformed, and removing
+// it would take every other session's directory with it.
+func TestSessionCleanupDirRejectsStateDirItself(t *testing.T) {
+	// Each of these has Dir() equal to the state directory itself.
+	for _, worktree := range []string{
+		"/state/saddle/sessions/worktree",
+		"/state/saddle/sessions/x",
+		"/state/saddle/sessions/",
+	} {
+		if got, ok := sessionCleanupDir("/state/saddle/sessions", worktree); ok {
+			t.Fatalf("sessionCleanupDir(%q) = %q, must refuse the state directory itself", worktree, got)
+		}
+	}
+}
+
+func TestEgressSummaryDescribesPosture(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		open, noNet     bool
+		allow           []string
+		want, wantLabel string
+	}{
+		{name: "open", open: true, want: "open", wantLabel: "OPEN(!)"},
+		{name: "no-net", noNet: true, want: "none", wantLabel: "none"},
+		{name: "empty allowlist", want: "none", wantLabel: "none"},
+		{name: "one host", allow: []string{"api.anthropic.com"},
+			want: "api.anthropic.com", wantLabel: "api.anthropic.com"},
+		{name: "several hosts", allow: []string{"api.anthropic.com", "proxy.golang.org", "sum.golang.org"},
+			want: "api.anthropic.com +2", wantLabel: "api.anthropic.com +2"},
+	} {
+		got := egressSummary(tc.open, tc.noNet, tc.allow)
+		if got != tc.want {
+			t.Fatalf("%s: egressSummary = %q, want %q", tc.name, got, tc.want)
+		}
+		if label := (State{Egress: got}).EgressLabel(); label != tc.wantLabel {
+			t.Fatalf("%s: EgressLabel = %q, want %q", tc.name, label, tc.wantLabel)
+		}
+	}
+}
+
+// State files written before Egress existed must not read as reassuringly
+// blank.
+func TestEgressLabelUnknownForOlderStateFiles(t *testing.T) {
+	if got := (State{}).EgressLabel(); got != "unknown" {
+		t.Fatalf("EgressLabel for a pre-Egress state file = %q, want unknown", got)
+	}
+}
+
+func TestPrintSummaryShowsNameProfileWorktreeAndEgress(t *testing.T) {
+	st := State{
+		Name: "saddle-fix", Worktree: "/state/saddle-fix.d/worktree",
+		Branch: "saddle/fix", Egress: "api.anthropic.com +1",
+	}
+	var b strings.Builder
+	printSummary(&b, st, profile.Profile{Name: "go"}, false,
+		[]string{"api.anthropic.com", "proxy.golang.org"}, render.ModeCmux)
+	out := b.String()
+	for _, want := range []string{
+		"saddle-fix", "go (detected)", "/state/saddle-fix.d/worktree",
+		"saddle/fix", "api.anthropic.com, proxy.golang.org", "all else denied", "cmux",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("summary missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrintSummaryFlagsOpenEgressAndNamedProfile(t *testing.T) {
+	var b strings.Builder
+	printSummary(&b, State{Name: "s", Egress: "open"}, profile.Profile{Name: "go"},
+		true, nil, render.ModeTerminal)
+	out := b.String()
+	if !strings.Contains(out, "OPEN") {
+		t.Fatalf("an unfiltered session must be flagged:\n%s", out)
+	}
+	if !strings.Contains(out, "go (named)") {
+		t.Fatalf("an explicitly named profile must say so:\n%s", out)
 	}
 }

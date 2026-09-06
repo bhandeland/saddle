@@ -4,8 +4,11 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/brandon/saddle/internal/macos"
 )
 
 type Result struct {
@@ -68,6 +71,17 @@ func decideCanaryAndListenerResults(serviceOK bool, lsofErr error, lsofOutput st
 
 func Run(ctx context.Context) []Result {
 	var rs []Result
+
+	// The macOS floor is a containment claim, not a packaging preference:
+	// below it, `--internal` isolation is unverified. Check it here so a
+	// `go build` install is told, not just a Homebrew one.
+	if v, err := macos.CheckFloor(); err != nil {
+		rs = append(rs, Result{Name: "macOS version", OK: false,
+			Detail: err.Error(),
+			Fix:    fmt.Sprintf("upgrade to macOS %d (Tahoe) or newer; saddle's egress containment was only verified there", macos.Floor)})
+	} else {
+		rs = append(rs, Result{Name: "macOS version", OK: true, Detail: v})
+	}
 
 	if _, err := exec.LookPath("container"); err != nil {
 		rs = append(rs, Result{Name: "container installed", OK: false,

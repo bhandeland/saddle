@@ -12,16 +12,38 @@ import (
 )
 
 type State struct {
-	Name      string    `json:"name"`
-	Profile   string    `json:"profile"`
-	Repo      string    `json:"repo"`
-	Worktree  string    `json:"worktree"`
-	Branch    string    `json:"branch"`
-	Network   string    `json:"network"`
-	Container string    `json:"container"`
-	ProxyAddr string    `json:"proxy_addr"`
-	Status    string    `json:"status"`
-	Created   time.Time `json:"created"`
+	Name      string `json:"name"`
+	Profile   string `json:"profile"`
+	Repo      string `json:"repo"`
+	Worktree  string `json:"worktree"`
+	Branch    string `json:"branch"`
+	Network   string `json:"network"`
+	Container string `json:"container"`
+	ProxyAddr string `json:"proxy_addr"`
+	// Egress records the containment posture the session was created with:
+	// "open" (no filtering), "none" (all denied), or a short allowlist
+	// summary. Written down rather than inferred, because the only other
+	// signal is one stderr line at creation that scrolls away in cmux mode,
+	// and an operator with several sessions must still be able to answer
+	// "which of these is uncontained?".
+	Egress  string    `json:"egress"`
+	Status  string    `json:"status"`
+	Created time.Time `json:"created"`
+}
+
+// EgressLabel renders a session's containment posture for a table column.
+// An unrestricted session is flagged so it cannot be skimmed past, and a
+// state file written before the field existed reads as "unknown" rather
+// than as a reassuring blank.
+func (s State) EgressLabel() string {
+	switch s.Egress {
+	case "":
+		return "unknown"
+	case "open":
+		return "OPEN(!)"
+	default:
+		return s.Egress
+	}
 }
 
 // Dir returns the sessions directory, honouring XDG_STATE_HOME so tests can
