@@ -210,8 +210,14 @@ func TestTheREADMEExampleProfileParses(t *testing.T) {
 		t.Fatalf("README example does not parse: %v", err)
 	}
 	spawn := p.CarryIn.MCP["remem"].Spawn
-	if len(spawn) == 0 || spawn[0] != "remem" {
-		t.Fatalf("README example lost its remem spawn: %v", spawn)
+	want := []string{"remem", "serve", "--http", "--host", "{{gateway}}", "--port", "9100", "--project", "{{repo}}"}
+	if len(spawn) != len(want) {
+		t.Fatalf("README example spawn: got %v want %v", spawn, want)
+	}
+	for i := range want {
+		if spawn[i] != want[i] {
+			t.Fatalf("README example spawn arg %d: got %q want %q", i, spawn[i], want[i])
+		}
 	}
 	out := Expand(p, map[string]string{"gateway": "10.0.0.1", "repo": "r", "proxy_port": "1"})
 	for _, a := range out.CarryIn.MCP["remem"].Spawn {

@@ -196,6 +196,9 @@ carry_in:
   skills: [remem, superpowers]
   mcp:
     remem:
+      spawn: ["remem", "serve", "--http",
+              "--host", "{{gateway}}", "--port", "9100",
+              "--project", "{{repo}}"]
       url: http://{{gateway}}:9100/mcp
 ```
 
