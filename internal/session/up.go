@@ -111,6 +111,47 @@ func SkillMounts(home string, skills []string) []runtime.Mount {
 
 // Up creates a contained session and attaches to it.
 func Up(ctx context.Context, o UpOptions) (State, error) {
+	if o.NoNet && o.OpenNet {
+		return State{}, fmt.Errorf("--no-net and --open-net are mutually exclusive")
+	}
+
+	// Resources are acquired one at a time below. ok is disarmed (set true)
+	// only once the session is fully recorded and reachable; until then this
+	// defer unwinds anything that was actually created, in reverse order, so
+	// no early return leaves an orphaned worktree, network, proxy, or
+	// container that saddle down can never find (nothing was Saved yet).
+	var (
+		sessDirCreated bool
+		sessDir        string
+		wtCreated      bool
+		wtPath         string
+		netCreated     bool
+		netName        string
+		px             *egress.Proxy
+		containerID    string
+	)
+	ok := false
+	defer func() {
+		if ok {
+			return
+		}
+		if containerID != "" {
+			_ = runtime.Remove(ctx, runtime.Handle{ID: containerID})
+		}
+		if px != nil {
+			px.Close()
+		}
+		if netCreated {
+			_ = runtime.DeleteNetwork(ctx, netName)
+		}
+		if wtCreated {
+			_ = worktree.Remove(ctx, o.Repo, wtPath)
+		}
+		if sessDirCreated {
+			_ = os.RemoveAll(sessDir)
+		}
+	}()
+
 	// 1. Resolve the profile.
 	dir, err := config.ProfilesDir()
 	if err != nil {
@@ -151,38 +192,46 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	sessDir := filepath.Join(stateDir, name+".d")
+	sessDir = filepath.Join(stateDir, name+".d")
 	if err := os.MkdirAll(sessDir, 0o700); err != nil {
 		return State{}, err
 	}
-	wtPath := filepath.Join(sessDir, "worktree")
+	sessDirCreated = true
+	wtPath = filepath.Join(sessDir, "worktree")
 
 	// 3. Worktree.
 	if err := worktree.Create(ctx, o.Repo, "saddle/"+branch, wtPath); err != nil {
 		return State{}, err
 	}
+	wtCreated = true
 
 	// 4. Network first, so the gateway is known before env is fixed.
-	netName := name + "-net"
+	netName = name + "-net"
 	n, err := runtime.CreateNetwork(ctx, netName, !o.OpenNet)
 	if err != nil {
 		return State{}, err
 	}
+	netCreated = true
 
-	// 5. Egress proxy bound to the gateway.
-	allow := append([]string{}, p.Egress.Allow...)
-	allow = append(allow, o.ExtraAllow...)
-	if o.NoNet {
-		allow = nil
-	}
-	px := egress.New(allow)
-	proxyAddr, err := px.Listen(n.Gateway + ":0")
-	if err != nil {
-		return State{}, fmt.Errorf("bind egress proxy on %s: %w", n.Gateway, err)
+	// 5. Egress proxy bound to the gateway. --open-net means no filtering at
+	// all, so no proxy is started: a listening proxy nobody uses is just a
+	// stray port and a leaked goroutine.
+	var proxyAddr, proxyPort string
+	if !o.OpenNet {
+		allow := append([]string{}, p.Egress.Allow...)
+		allow = append(allow, o.ExtraAllow...)
+		if o.NoNet {
+			allow = nil
+		}
+		px = egress.New(allow)
+		proxyAddr, err = px.Listen(n.Gateway + ":0")
+		if err != nil {
+			return State{}, fmt.Errorf("bind egress proxy on %s: %w", n.Gateway, err)
+		}
+		_, proxyPort, _ = strings.Cut(proxyAddr, ":")
 	}
 
 	// 6. Expand profile placeholders now that the gateway is known.
-	_, proxyPort, _ := strings.Cut(proxyAddr, ":")
 	p = profile.Expand(p, map[string]string{
 		"gateway":    n.Gateway,
 		"proxy_port": proxyPort,
@@ -211,13 +260,12 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	// 9. Container.
 	env := map[string]string{
 		"CLAUDE_CODE_OAUTH_TOKEN": token,
-		"HTTPS_PROXY":             "http://" + proxyAddr,
-		"HTTP_PROXY":              "http://" + proxyAddr,
 	}
 	if o.OpenNet {
-		delete(env, "HTTPS_PROXY")
-		delete(env, "HTTP_PROXY")
 		fmt.Fprintln(os.Stderr, "WARNING: --open-net disables all egress filtering")
+	} else {
+		env["HTTPS_PROXY"] = "http://" + proxyAddr
+		env["HTTP_PROXY"] = "http://" + proxyAddr
 	}
 	h, err := runtime.Create(ctx, runtime.Spec{
 		Name:    name,
@@ -236,6 +284,7 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
+	containerID = h.ID
 
 	// 10. Persist before attaching, so a crash during attach is recoverable.
 	st := State{
@@ -264,12 +313,43 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 			return st, err
 		}
 	}
-	px.Close()
+	if px != nil {
+		px.Close()
+	}
+	ok = true
 	return st, nil
 }
 
-// waitForExit blocks until the container is no longer listed as running.
+// waitForExit blocks until the container has appeared and then, in a second
+// phase, until it is no longer listed as running.
+//
+// Container creation only creates the container; in cmux mode render.Attach
+// returns as soon as the cmux workspace command exits, and the shell cmux
+// spawned starts the container afterwards. Without a wait-to-appear phase, a
+// slow cmux/shell startup or image pull could make the first poll below find
+// the container absent and mistake "not started yet" for "already exited",
+// closing the only egress route out while the session still has its whole
+// life ahead of it.
 func waitForExit(ctx context.Context, id string) error {
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		alive, err := runtime.Running(ctx)
+		if err != nil {
+			return err
+		}
+		if alive[id] {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("container %s never started", id)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -293,17 +373,39 @@ func Down(ctx context.Context, name string, force bool) error {
 	if err != nil {
 		return err
 	}
-	dirty, err := worktree.IsDirty(ctx, st.Worktree)
-	if err != nil && !force {
+
+	// A worktree removed by hand is not dirty, it is just gone; do not let
+	// its absence block teardown of everything else.
+	if _, statErr := os.Stat(st.Worktree); statErr == nil {
+		dirty, err := worktree.IsDirty(ctx, st.Worktree)
+		if err != nil && !force {
+			return err
+		}
+		if dirty && !force {
+			return fmt.Errorf("worktree %s has uncommitted changes; commit them or pass --force", st.Worktree)
+		}
+	}
+
+	// Best-effort remove, but then verify: if the container is genuinely
+	// still running, deleting the network and state now would strand a live
+	// container on an orphaned network with no record of either.
+	_ = runtime.Remove(ctx, runtime.Handle{ID: st.Container})
+	alive, err := runtime.Running(ctx)
+	if err != nil {
 		return err
 	}
-	if dirty && !force {
-		return fmt.Errorf("worktree %s has uncommitted changes; commit them or pass --force", st.Worktree)
+	if alive[st.Container] {
+		return fmt.Errorf("container %s could not be removed", st.Container)
 	}
-	_ = runtime.Remove(ctx, runtime.Handle{ID: st.Container})
+
 	_ = runtime.DeleteNetwork(ctx, st.Network)
 	if err := worktree.Remove(ctx, st.Repo, st.Worktree); err != nil && !force {
 		return err
 	}
+
+	// st.Worktree is <sessDir>/worktree; remove the whole session directory
+	// (mcp.json, the now-empty worktree slot) so it does not accumulate.
+	_ = os.RemoveAll(filepath.Dir(st.Worktree))
+
 	return Delete(name)
 }

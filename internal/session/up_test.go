@@ -2,11 +2,16 @@ package session
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/brandon/saddle/internal/profile"
 )
+
+// nameRE pins the SessionName allowlist: lower-case ASCII letters and
+// digits, single hyphens as separators, never leading/trailing/doubled.
+var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 func TestSessionNameFromRepoAndBranch(t *testing.T) {
 	got := SessionName("/Users/brandon/llmworkspace/saddle", "fix-auth")
@@ -20,6 +25,9 @@ func TestSessionNameSanitisesSlashes(t *testing.T) {
 	if strings.ContainsAny(got, "/ .") {
 		t.Fatalf("unsanitised session name %q", got)
 	}
+	if !nameRE.MatchString(got) {
+		t.Fatalf("SessionName(%q) = %q, does not match allowlist %s", "feature/big thing", got, nameRE)
+	}
 }
 
 func TestSessionNameStripsShellMetacharacters(t *testing.T) {
@@ -29,11 +37,18 @@ func TestSessionNameStripsShellMetacharacters(t *testing.T) {
 			t.Fatalf("SessionName(%q) = %q, contains %q", "x;whoami", got, bad)
 		}
 	}
+	if !nameRE.MatchString(got) {
+		t.Fatalf("SessionName(%q) = %q, does not match allowlist %s", "x;whoami", got, nameRE)
+	}
 }
 
 func TestSessionNameIsNeverEmpty(t *testing.T) {
-	if got := SessionName("///", "!!!"); got == "" {
+	got := SessionName("///", "!!!")
+	if got == "" {
 		t.Fatal("SessionName must never return an empty string")
+	}
+	if !nameRE.MatchString(got) {
+		t.Fatalf("SessionName(%q) = %q, does not match allowlist %s", "!!!", got, nameRE)
 	}
 }
 
