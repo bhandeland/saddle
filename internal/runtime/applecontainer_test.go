@@ -79,6 +79,37 @@ func TestParseRunningEmptyListing(t *testing.T) {
 	}
 }
 
+func TestParseStatusMatchesRunningRow(t *testing.T) {
+	out := `ID  IMAGE  OS  ARCH  STATE  IP  CPUS  MEMORY  STARTED
+saddle-a  alpine  linux  arm64  running  192.168.64.2  4  8g  now`
+	if got := parseStatus(out, "saddle-a"); got != "running" {
+		t.Fatalf("got %q want running", got)
+	}
+}
+
+func TestParseStatusMatchesStoppedRow(t *testing.T) {
+	out := `ID  IMAGE  OS  ARCH  STATE  IP  CPUS  MEMORY  STARTED
+saddle-a  alpine  linux  arm64  stopped  192.168.64.2  4  8g  now`
+	if got := parseStatus(out, "saddle-a"); got != "stopped" {
+		t.Fatalf("got %q want stopped", got)
+	}
+}
+
+func TestParseStatusNoMatchReturnsEmpty(t *testing.T) {
+	out := `ID  IMAGE  OS  ARCH  STATE  IP  CPUS  MEMORY  STARTED
+saddle-a  alpine  linux  arm64  running  192.168.64.2  4  8g  now`
+	if got := parseStatus(out, "saddle-nonexistent"); got != "" {
+		t.Fatalf("got %q want empty", got)
+	}
+}
+
+func TestParseStatusHeaderOnlyReturnsEmpty(t *testing.T) {
+	out := "ID  IMAGE  OS  ARCH  STATE  IP  CPUS  MEMORY  STARTED"
+	if got := parseStatus(out, "saddle-a"); got != "" {
+		t.Fatalf("got %q want empty", got)
+	}
+}
+
 func TestCreateArgsMarksReadOnlyMounts(t *testing.T) {
 	args := createArgs(Spec{
 		Name:  "x", Image: "alpine",

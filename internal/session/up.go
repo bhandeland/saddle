@@ -116,10 +116,14 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	}
 
 	// Resources are acquired one at a time below. ok is disarmed (set true)
-	// only once the session is fully recorded and reachable; until then this
-	// defer unwinds anything that was actually created, in reverse order, so
-	// no early return leaves an orphaned worktree, network, proxy, or
-	// container that saddle down can never find (nothing was Saved yet).
+	// as soon as Save persists the session, which is the point at which
+	// `saddle down` becomes able to find and tear down everything created so
+	// far. Before that point, an early return here would otherwise orphan a
+	// worktree, network, proxy, or container with no state file pointing at
+	// it, so this defer unwinds anything actually created, in reverse order.
+	// It must never fire after Save has succeeded: doing so would delete a
+	// live, recorded session's worktree (including uncommitted work) out
+	// from under it on any later failure, such as a Ctrl-C during attach.
 	var (
 		sessDirCreated bool
 		sessDir        string
@@ -135,17 +139,26 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		if ok {
 			return
 		}
+		// Cleanup must not use the caller's ctx: on cancellation (e.g. a
+		// Ctrl-C that also triggered this failure) exec.CommandContext calls
+		// below would fail instantly and their errors are discarded, so
+		// the container and network would survive while px.Close() and
+		// os.RemoveAll (which are not ctx-bound) would still happen —
+		// leaving a live container with its /work mount deleted and no
+		// egress route out. Give teardown its own bounded time instead.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
 		if containerID != "" {
-			_ = runtime.Remove(ctx, runtime.Handle{ID: containerID})
+			_ = runtime.Remove(cleanupCtx, runtime.Handle{ID: containerID})
 		}
 		if px != nil {
 			px.Close()
 		}
 		if netCreated {
-			_ = runtime.DeleteNetwork(ctx, netName)
+			_ = runtime.DeleteNetwork(cleanupCtx, netName)
 		}
 		if wtCreated {
-			_ = worktree.Remove(ctx, o.Repo, wtPath)
+			_ = worktree.Remove(cleanupCtx, o.Repo, wtPath)
 		}
 		if sessDirCreated {
 			_ = os.RemoveAll(sessDir)
@@ -286,7 +299,12 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	}
 	containerID = h.ID
 
-	// 10. Persist before attaching, so a crash during attach is recoverable.
+	// 10. Persist before attaching. This is the point of no return for the
+	// unwind above: once the session is recorded, `saddle down` owns its
+	// teardown, so a failure past this point must be returned as-is rather
+	// than have this function delete the very session it just recorded —
+	// that would destroy a live, possibly-dirty worktree out from under an
+	// attach failure or a Ctrl-C instead of leaving a recoverable session.
 	st := State{
 		Name: name, Profile: p.Name, Repo: o.Repo, Worktree: wtPath,
 		Branch: "saddle/" + branch, Network: netName, Container: h.ID,
@@ -295,6 +313,7 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	if err := Save(st); err != nil {
 		return State{}, err
 	}
+	ok = true
 
 	mode := o.Render
 	if mode == "" {
@@ -316,38 +335,47 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	if px != nil {
 		px.Close()
 	}
-	ok = true
 	return st, nil
 }
 
-// waitForExit blocks until the container has appeared and then, in a second
-// phase, until it is no longer listed as running.
+// waitForExit blocks until the container has appeared as running and then,
+// in a second phase, until it is no longer listed as running.
 //
 // Container creation only creates the container; in cmux mode render.Attach
 // returns as soon as the cmux workspace command exits, and the shell cmux
-// spawned starts the container afterwards. Without a wait-to-appear phase, a
-// slow cmux/shell startup or image pull could make the first poll below find
-// the container absent and mistake "not started yet" for "already exited",
-// closing the only egress route out while the session still has its whole
-// life ahead of it.
+// spawned starts the container afterwards. The appear phase uses
+// runtime.Status rather than runtime.Running, because Running's `container
+// list` (without -a) only ever lists running containers: a container that
+// starts and exits within one poll window would never be observed alive,
+// so absence alone cannot distinguish "hasn't started yet" from "already
+// exited" — and mistaking the latter for the former would close the only
+// egress route out while the session still has its whole life ahead of it.
 func waitForExit(ctx context.Context, id string) error {
 	deadline := time.Now().Add(120 * time.Second)
 	for {
-		alive, err := runtime.Running(ctx)
+		status, err := runtime.Status(ctx, id)
 		if err != nil {
 			return err
 		}
-		if alive[id] {
-			break
+		switch status {
+		case "running":
+		case "created":
+			// Not yet started; keep waiting, subject to the deadline below.
+			if time.Now().After(deadline) {
+				return fmt.Errorf("container %s never started", id)
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		default:
+			// "" (no longer listed at all) or any other terminal state
+			// means it already ran and stopped before we observed it.
+			return fmt.Errorf("container %s exited before it could be observed running (status %q)", id, status)
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("container %s never started", id)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
+		break
 	}
 
 	for {
@@ -403,9 +431,34 @@ func Down(ctx context.Context, name string, force bool) error {
 		return err
 	}
 
-	// st.Worktree is <sessDir>/worktree; remove the whole session directory
-	// (mcp.json, the now-empty worktree slot) so it does not accumulate.
-	_ = os.RemoveAll(filepath.Dir(st.Worktree))
+	// st.Worktree is normally <sessDir>/worktree; remove the whole session
+	// directory (mcp.json, the now-empty worktree slot) so it does not
+	// accumulate. sessionCleanupDir refuses to act on an empty or
+	// out-of-place path, so a truncated or hand-edited state file can never
+	// turn this into an rm -rf of something saddle does not own.
+	if stateDir, err := Dir(); err == nil {
+		if d, ok := sessionCleanupDir(stateDir, st.Worktree); ok {
+			_ = os.RemoveAll(d)
+		}
+	}
 
 	return Delete(name)
+}
+
+// sessionCleanupDir returns the session directory to remove for a session's
+// worktree path, and whether removing it is safe. An empty worktree path is
+// refused outright: filepath.Dir("") is ".", and blindly removing that
+// would delete the current working directory. The candidate directory must
+// also fall under saddle's state directory, so nothing outside saddle's own
+// control is ever touched.
+func sessionCleanupDir(stateDir, worktreePath string) (string, bool) {
+	if worktreePath == "" {
+		return "", false
+	}
+	dir := filepath.Clean(filepath.Dir(worktreePath))
+	base := filepath.Clean(stateDir)
+	if dir != base && !strings.HasPrefix(dir, base+string(filepath.Separator)) {
+		return "", false
+	}
+	return dir, true
 }

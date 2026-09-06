@@ -117,6 +117,29 @@ func TestSkillMountsEmptyWhenNoneRequested(t *testing.T) {
 	}
 }
 
+func TestSessionCleanupDirRejectsEmptyWorktree(t *testing.T) {
+	if dir, ok := sessionCleanupDir("/home/x/.local/state/saddle/sessions", ""); ok {
+		t.Fatalf("expected empty worktree to be rejected, got dir=%q ok=%v", dir, ok)
+	}
+}
+
+func TestSessionCleanupDirRejectsPathOutsideStateDir(t *testing.T) {
+	if dir, ok := sessionCleanupDir("/home/x/.local/state/saddle/sessions", "/home/x/somewhere-else/worktree"); ok {
+		t.Fatalf("expected out-of-place worktree to be rejected, got dir=%q ok=%v", dir, ok)
+	}
+}
+
+func TestSessionCleanupDirAcceptsPathUnderStateDir(t *testing.T) {
+	stateDir := "/home/x/.local/state/saddle/sessions"
+	dir, ok := sessionCleanupDir(stateDir, stateDir+"/my-session.d/worktree")
+	if !ok {
+		t.Fatal("expected in-place worktree to be accepted")
+	}
+	if dir != stateDir+"/my-session.d" {
+		t.Fatalf("got %q want %q", dir, stateDir+"/my-session.d")
+	}
+}
+
 func TestMCPConfigEmptyWhenNoServers(t *testing.T) {
 	data, err := MCPConfig(profile.Profile{})
 	if err != nil {

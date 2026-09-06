@@ -187,3 +187,28 @@ func Running(ctx context.Context) (map[string]bool, error) {
 	}
 	return parseRunning(out), nil
 }
+
+func parseStatus(out, id string) string {
+	for i, line := range strings.Split(out, "\n") {
+		if i == 0 || strings.TrimSpace(line) == "" {
+			continue // header or blank
+		}
+		fields := strings.Fields(line)
+		if len(fields) > 4 && fields[0] == id {
+			return fields[4]
+		}
+	}
+	return ""
+}
+
+// Status reports a container's state ("created", "running", "stopped", ...)
+// or "" if no such container exists. Unlike Running it uses `container list
+// -a`, so it distinguishes a container that has not started yet from one
+// that has already exited.
+func Status(ctx context.Context, id string) (string, error) {
+	out, err := run(ctx, "list", "-a")
+	if err != nil {
+		return "", err
+	}
+	return parseStatus(out, id), nil
+}
