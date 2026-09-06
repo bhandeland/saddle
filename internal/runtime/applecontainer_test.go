@@ -112,10 +112,42 @@ func TestParseStatusHeaderOnlyReturnsEmpty(t *testing.T) {
 
 func TestCreateArgsMarksReadOnlyMounts(t *testing.T) {
 	args := createArgs(Spec{
-		Name:  "x", Image: "alpine",
+		Name: "x", Image: "alpine",
 		Mounts: []Mount{{Source: "/skills", Target: "/skills", ReadOnly: true}},
 	})
 	if !strings.Contains(strings.Join(args, " "), "/skills:/skills:ro") {
 		t.Fatalf("read-only mount not marked: %v", args)
+	}
+}
+
+// --volume is colon-delimited, so a ':' in a path would not fail loudly: it
+// would parse as a different source, target, or option and silently mount
+// the wrong thing into a container running with permissions off.
+func TestValidateMountsRejectsColonInPaths(t *testing.T) {
+	for _, m := range []Mount{
+		{Source: "/host/a:b", Target: "/work"},
+		{Source: "/host", Target: "/work:ro"},
+		{Source: "/a:b", Target: "/c:d"},
+	} {
+		if err := validateMounts([]Mount{m}); err == nil {
+			t.Fatalf("validateMounts must reject %+v", m)
+		}
+	}
+}
+
+func TestValidateMountsAcceptsOrdinaryPaths(t *testing.T) {
+	err := validateMounts([]Mount{
+		{Source: "/Users/b/.local/state/saddle/sessions/x.d/worktree", Target: "/work"},
+		{Source: "/etc/saddle/mcp.json", Target: "/etc/saddle/mcp.json", ReadOnly: true},
+	})
+	if err != nil {
+		t.Fatalf("ordinary mounts rejected: %v", err)
+	}
+}
+
+func TestAttachArgvTargetsTheContainerByID(t *testing.T) {
+	got := strings.Join(AttachArgv("saddle-fix"), " ")
+	if got != "container start -ai saddle-fix" {
+		t.Fatalf("AttachArgv = %q", got)
 	}
 }

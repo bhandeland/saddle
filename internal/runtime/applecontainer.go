@@ -104,6 +104,19 @@ func DeleteNetwork(ctx context.Context, name string) error {
 	return err
 }
 
+// validateMounts refuses a mount path containing ':'. `--volume` is
+// colon-delimited, so such a path would not fail loudly — it would parse as
+// a different source, target, or option, silently mounting the wrong thing
+// into a container running an agent with permissions off.
+func validateMounts(ms []Mount) error {
+	for _, m := range ms {
+		if strings.Contains(m.Source, ":") || strings.Contains(m.Target, ":") {
+			return fmt.Errorf("mount path may not contain ':': %s -> %s", m.Source, m.Target)
+		}
+	}
+	return nil
+}
+
 func createArgs(s Spec) []string {
 	args := []string{"create", "--name", s.Name}
 	if s.Network != "" {
@@ -150,13 +163,21 @@ func sortedKeys(m map[string]string) []string {
 // attaches a TTY to it. Returning the attach argv is what lets render stay
 // backend-agnostic.
 func Create(ctx context.Context, s Spec) (Handle, error) {
+	if err := validateMounts(s.Mounts); err != nil {
+		return Handle{}, err
+	}
 	if _, err := run(ctx, createArgs(s)...); err != nil {
 		return Handle{}, err
 	}
-	return Handle{
-		ID:         s.Name,
-		AttachArgv: []string{"container", "start", "-ai", s.Name},
-	}, nil
+	return Handle{ID: s.Name, AttachArgv: AttachArgv(s.Name)}, nil
+}
+
+// AttachArgv is the command that attaches a TTY to an existing container.
+// It is exported so `saddle attach` can re-derive it from a state file
+// without re-creating anything, and so knowledge of the container CLI stays
+// inside this package.
+func AttachArgv(id string) []string {
+	return []string{"container", "start", "-ai", id}
 }
 
 func Remove(ctx context.Context, h Handle) error {

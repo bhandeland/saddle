@@ -15,7 +15,6 @@ import (
 type Proxy struct {
 	allow map[string]bool
 	srv   *http.Server
-	ln    net.Listener
 	once  sync.Once
 }
 
@@ -47,7 +46,6 @@ func (p *Proxy) Listen(addr string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	p.ln = ln
 	p.srv = &http.Server{Handler: http.HandlerFunc(p.handle)}
 	go p.srv.Serve(ln)
 	return ln.Addr().String(), nil
