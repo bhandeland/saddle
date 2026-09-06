@@ -49,6 +49,19 @@ func Parse(data []byte) (Profile, error) {
 	if strings.TrimSpace(p.Name) == "" {
 		return Profile{}, errors.New("profile: name is required")
 	}
+	// Both fields below are parsed but nothing reads them. A security-
+	// relevant field that silently does nothing is worse than one that does
+	// not exist: `ssh_agent: true` would look like the agent socket had been
+	// forwarded, and `tools: recall` would look like the MCP server had been
+	// restricted to reads, when neither is true. Refuse instead.
+	if p.CarryIn.SSHAgent {
+		return Profile{}, errors.New("profile: carry_in.ssh_agent is not yet implemented; remove it rather than relying on it")
+	}
+	for name, m := range p.CarryIn.MCP {
+		if strings.TrimSpace(m.Tools) != "" {
+			return Profile{}, fmt.Errorf("profile: carry_in.mcp.%s.tools is not yet implemented; every carried-in server gets the tools it exposes", name)
+		}
+	}
 	return p, nil
 }
 

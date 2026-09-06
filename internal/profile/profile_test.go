@@ -15,8 +15,6 @@ carry_in:
   mcp:
     remem:
       url: http://{{gateway}}:9100/mcp
-      tools: read-write
-  ssh_agent: false
 `))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -27,8 +25,39 @@ carry_in:
 	if len(p.Egress.Allow) != 2 || p.Egress.Allow[0] != "api.anthropic.com" {
 		t.Fatalf("egress wrong: %+v", p.Egress)
 	}
-	if p.CarryIn.MCP["remem"].Tools != "read-write" {
+	if p.CarryIn.MCP["remem"].URL != "http://{{gateway}}:9100/mcp" {
 		t.Fatalf("mcp wrong: %+v", p.CarryIn.MCP)
+	}
+	if len(p.CarryIn.Skills) != 1 || p.CarryIn.Skills[0] != "remem" {
+		t.Fatalf("skills wrong: %+v", p.CarryIn.Skills)
+	}
+}
+
+// Both fields below parse but are never acted on. Accepting them silently
+// would misrepresent the containment, so Parse must refuse them.
+func TestParseRejectsUnimplementedSSHAgent(t *testing.T) {
+	if _, err := Parse([]byte("name: go\ncarry_in:\n  ssh_agent: true\n")); err == nil {
+		t.Fatal("expected error for carry_in.ssh_agent: true")
+	}
+}
+
+func TestParseAllowsSSHAgentSetToFalse(t *testing.T) {
+	if _, err := Parse([]byte("name: go\ncarry_in:\n  ssh_agent: false\n")); err != nil {
+		t.Fatalf("ssh_agent: false is the zero value and must be accepted: %v", err)
+	}
+}
+
+func TestParseRejectsUnimplementedMCPTools(t *testing.T) {
+	_, err := Parse([]byte(`
+name: go
+carry_in:
+  mcp:
+    remem:
+      url: http://x/mcp
+      tools: recall
+`))
+	if err == nil {
+		t.Fatal("expected error for carry_in.mcp.<name>.tools")
 	}
 }
 
