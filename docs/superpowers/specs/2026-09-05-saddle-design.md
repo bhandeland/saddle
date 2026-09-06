@@ -213,8 +213,12 @@ in as an endpoint URL. Everything else stays out unless a profile names it.
 
 Profile string values support substitution of session-scoped values that are
 not known until the container exists: `{{gateway}}` is the host address the
-container can reach, and `{{proxy_port}}` is the port the egress proxy bound
-to. Those are the only two. A carried-in MCP server's port is written literally
+container can reach, `{{proxy_port}}` is the port the egress proxy bound to,
+and `{{repo}}` is the name of the repository the session was opened on. That
+last one is resolved the way git resolves it - `--git-common-dir`, then the
+name of the directory holding it - so a subdirectory or a linked worktree both
+name the main repository, which is the same answer remem's own
+`resolve_project` gives. A carried-in MCP server's port is written literally
 by the profile author. saddle can now start such a server - see
 `carry_in.mcp.<name>.spawn` and `2026-09-06-remem-http-transport-design.md` -
 but a fixed port needs no negotiating, because each session's gateway is a

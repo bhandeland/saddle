@@ -176,6 +176,15 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		return State{}, fmt.Errorf("--no-net and --open-net are mutually exclusive")
 	}
 
+	// Resolve the target once, up front. `saddle up` defaults to ".", and
+	// every later use of o.Repo takes a name from it - the session name, and
+	// the {{repo}} the profile hands the agent as a memory project. Left
+	// relative, both come out as "." and the session records its work under a
+	// project literally named ".", which no knowledge base ever queries.
+	if abs, err := filepath.Abs(o.Repo); err == nil {
+		o.Repo = abs
+	}
+
 	// The containment rests on `--internal` network behaviour that was only
 	// ever verified on macOS 26. Below the floor saddle would be running an
 	// agent with permission prompting disabled behind isolation nobody has
@@ -321,7 +330,7 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	p = profile.Expand(p, map[string]string{
 		"gateway":    n.Gateway,
 		"proxy_port": proxyPort,
-		"repo":       filepath.Base(o.Repo),
+		"repo":       worktree.RepoName(ctx, o.Repo),
 	})
 
 	// 6b. Host services the profile asks for, before the container so that

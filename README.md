@@ -53,8 +53,12 @@ the top of the repository, which is what lets `saddle up` choose without
 `--profile`. `egress.allow` is the whole allowlist - matching is exact and
 case-insensitive on the hostname, with no wildcards, and everything else is
 denied. `carry_in.skills` names directories under `~/.claude/skills`, which
-are mounted read-only. String values may use `{{gateway}}` and
-`{{proxy_port}}`, which are substituted once the session's network exists.
+are mounted read-only. String values may use `{{gateway}}`, `{{proxy_port}}`,
+and `{{repo}}`, which are substituted once the session's network exists.
+`{{repo}}` is the name of the repository the session was opened on, resolved
+the way git resolves it - a subdirectory or a linked worktree both name the
+main repository - so a memory server carried in files its writes under the
+same project the host would.
 
 `carry_in.mcp.<name>.spawn` is the host command that serves that endpoint.
 saddle runs it once the session network exists, waits for the address in

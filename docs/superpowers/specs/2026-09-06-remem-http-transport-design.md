@@ -153,14 +153,23 @@ today: saddle assumes something is already listening.
 
 `profile.Expand` currently rewrites `MCP[].URL` only. It also rewrites each
 element of `Spawn`. A third variable joins `{{gateway}}` and `{{proxy_port}}`:
-`{{repo}}`, the base name of the repository path the session was opened on
-(`filepath.Base(o.Repo)`, the same input `SessionName` already derives from),
-which is what remem needs for `--project`.
+`{{repo}}`, the name of the repository the session was opened on, which is what
+remem needs for `--project`.
 
-That value agrees with what remem would resolve on its own. `resolve_project`
-resolves a worktree to the main repository's name, so a host session working in
-`~/llmworkspace/saddle` and a contained session working in a saddle worktree of
-it both file under `saddle`.
+That value has to agree with what remem would resolve on its own, so it is
+derived by remem's own rule rather than from the path saddle was handed.
+`resolve_project` asks git for `--git-common-dir` and names the directory
+holding it, which resolves both a subdirectory and a linked worktree to the
+*main* repository. `worktree.RepoName` does the same, on the target path once
+`Up` has resolved it with `filepath.Abs`. So a host session working in
+`~/llmworkspace/saddle`, a contained session working in a saddle worktree of
+it, and a `saddle up ./internal/session` all file under `saddle`. A path that
+is not in a repository falls back to its base name; this never fails `up`.
+
+Taking `filepath.Base` of the path instead would disagree in three common
+cases: a bare `saddle up` (`.`), a subdirectory, and a worktree. The first is
+the worst, because a project named `.` is one no knowledge base queries - the
+writes succeed, return an id, and never surface.
 
 ### Lifecycle
 
