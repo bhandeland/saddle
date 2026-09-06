@@ -137,7 +137,8 @@ saddle doctor               preflight everything
 
 ```
 $ saddle up ~/llmworkspace/saddle
-  profile   go (detected: go.mod)
+  session   saddle-fix-auth
+  profile   go (detected)
   worktree  ~/.local/state/saddle/wt/saddle-fix-auth  [branch saddle/fix-auth]
   egress    api.anthropic.com, proxy.golang.org, +2      (all else denied)
   attach    cmux workspace 3
@@ -153,8 +154,10 @@ makes every containment weakness a correctness bug.
 **Containers are cattle, worktrees are pets.** On exit the container is removed
 and the worktree stays. Value lives in commits on `saddle/<name>`, and because
 the worktree is a host bind-mount there is no export step. `saddle down` removes
-the worktree and refuses if it is dirty or has unpushed commits without
-`--force`.
+the worktree and refuses if it is dirty without `--force`. Refusing on unpushed
+commits is **not implemented**; only the dirty check exists. `git worktree
+remove` leaves the `saddle/<name>` branch and every commit on it intact, so a
+teardown loses the working directory, never committed work.
 
 **Sessions are named from repo and branch**, collision-suffixed, overridable
 with `--name`. Unpronounceable ids make `saddle ls` useless.
@@ -194,9 +197,12 @@ carry_in:
   mcp:
     remem:
       url: http://{{gateway}}:9100/mcp
-      tools: read-write
-  ssh_agent: false
 ```
+
+Two fields deliberately do **not** appear above. `carry_in.ssh_agent` and a
+per-server `tools:` scope are both unimplemented, and a security-relevant
+field that silently does nothing is worse than one that does not exist, so
+saddle rejects a profile that sets either.
 
 Skills carry in as a read-only mount, because they are files. MCP servers carry
 in as an endpoint URL. Everything else stays out unless a profile names it.
@@ -231,8 +237,10 @@ database rather than a host process and a container process racing.
 
 Accepted risk: a session running with permissions off, reading potentially
 untrusted repo or web content, can write to the permanent knowledge store. The
-bridge remains the policy point, so `tools: recall` is available per-profile for
-a hardened profile later.
+bridge remains the policy point, so `tools: recall` could be offered
+per-profile for a hardened profile later. It is not implemented today, and a
+profile that sets it is rejected rather than silently carrying a read-write
+server.
 
 **Known regression.** `remem install` puts three things into an agent: the MCP
 server, a hook, and a skill. The endpoint carries the server and the skill is
@@ -339,6 +347,28 @@ Harmless for git worktrees; noted in case it bites.
 **The OAuth token is reachable by the agent.** See "The outside".
 
 **No automatic remem recording in contained sessions.** See "remem".
+
+**DNS resolution is not pinned.** The egress proxy allowlists by hostname: it
+checks the `CONNECT` target's name and then dials that name. It does not pin
+the address the name resolved to during the check, so a hostname that
+re-resolves to a different address between the check and the connection is not
+caught. An attacker who controls DNS for an allowlisted name, or who can win
+that race, reaches an address of their choosing through the proxy.
+
+### Verified containment properties
+
+Verified by test on 2026-09-05 against Apple `container` 1.3.1 on macOS 26.6.
+The scope is that runtime version only; neither property is a guarantee for
+other versions or backends.
+
+- **Per-session networks are isolated from each other.** A container on
+  session A's network can reach its own gateway but **not** another session's
+  gateway. One session therefore cannot borrow another session's egress proxy
+  to reach hosts its own allowlist denies.
+- **An `--internal` network provides no working DNS.** `/etc/resolv.conf`
+  inside the container points at the gateway, but the resolver there refuses
+  connections. There is no unfiltered outbound DNS channel to tunnel over or
+  exfiltrate through.
 
 ## Open risks
 

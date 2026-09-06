@@ -1,0 +1,17 @@
+version: 2
+project_name: saddle
+builds:
+  - main: ./cmd/saddle
+    binary: saddle
+    goos: [darwin]
+    goarch: [arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+archives:
+  - formats: [tar.gz]
+checksum:
+  name_template: checksums.txt
+release:
+  github:
+    owner: brandon
+    name: saddle
