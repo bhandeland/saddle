@@ -176,3 +176,57 @@ func TestRepoNameFallsBackOutsideARepository(t *testing.T) {
 		t.Fatalf("got %q want %q", got, "loose-files")
 	}
 }
+
+// noisyGit puts a git on PATH that writes a warning to stderr and otherwise
+// behaves exactly like the real one. Real git does this for its own reasons -
+// a stale index, an unreachable hooksPath, a safe.directory hint - and it
+// still exits 0, so nothing downstream is told the answer arrived with a
+// passenger.
+func noisyGit(t *testing.T) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git on PATH")
+	}
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "git")
+	// The warnings straddle the answer: git's real stderr passes through
+	// untouched, and one warning lands after the output. That trailing one
+	// names a path, as git's warnings often do, which is what turns a
+	// combined-stream parse from merely wrong into silently plausible.
+	script := "#!/bin/sh\n" +
+		"echo 'warning: noisy git says hello' >&2\n" +
+		"out=$(" + real + " \"$@\")\n" +
+		"st=$?\n" +
+		"printf '%s\\n' \"$out\"\n" +
+		"echo \"warning: unable to access '/etc/gitconfig': Permission denied\" >&2\n" +
+		"exit $st\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestRepoNameIgnoresGitStderr(t *testing.T) {
+	repo := newNamedRepo(t, "acme-tools")
+	noisyGit(t)
+	if got := RepoName(context.Background(), repo); got != "acme-tools" {
+		t.Fatalf("RepoName = %q, want %q", got, "acme-tools")
+	}
+}
+
+func TestIsDirtyIgnoresGitStderr(t *testing.T) {
+	repo := newRepo(t)
+	dest := filepath.Join(t.TempDir(), "wt")
+	if err := Create(context.Background(), repo, "saddle/noisy", dest); err != nil {
+		t.Fatal(err)
+	}
+	noisyGit(t)
+	dirty, err := IsDirty(context.Background(), dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		t.Fatal("clean worktree reported dirty because git warned on stderr")
+	}
+}

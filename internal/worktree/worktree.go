@@ -3,6 +3,7 @@
 package worktree
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -10,14 +11,20 @@ import (
 	"strings"
 )
 
+// git runs a git command in dir and returns its stdout. stderr is kept out of
+// the return value and folded into the error instead: git writes warnings
+// there while still exiting 0, and a caller that parses the combined stream
+// reads those warnings as part of the answer.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return string(out), nil
+	return stdout.String(), nil
 }
 
 // Create adds a worktree at dest checked out on a new branch.
