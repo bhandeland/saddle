@@ -34,8 +34,15 @@ The second change is deliberately general. saddle does not learn about remem.
   is the boundary. See "Trust".
 - Automatic event recording inside containers. Still broken, still deferred;
   see "What this does not fix".
-- Persisting the server across `saddle up` exiting. It dies with `up`, exactly
-  as the egress proxy does.
+- Persisting the server across `saddle up` exiting. It is killed when `up`
+  returns, giving it the same lifetime as the egress proxy.
+
+  The mechanism differs, and the difference matters. The proxy is a goroutine,
+  so it cannot outlive the process. A child process can: it is reparented and
+  keeps running. So `up` kills its children explicitly, and `State` records
+  their pids so `down` can reap a survivor of a crashed `up`. Killing by
+  recorded pid is guarded by matching the process's command against the
+  recorded one, because a pid alone is reused.
 - A general host-process supervisor. One child per named server, started once,
   killed at teardown. No restarts, no health loop, no backoff.
 
