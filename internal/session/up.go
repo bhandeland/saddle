@@ -122,6 +122,12 @@ var SpawnReadyTimeout = 30 * time.Second
 // alternative to waiting is a bind error the operator cannot act on.
 const GatewayBindTimeout = 30 * time.Second
 
+// waitForExitDeadline bounds how long waitForExit waits for a container to
+// appear as running before giving up. Named so the deadline used in the
+// timeout check and the one quoted in its error message can never drift
+// apart.
+const waitForExitDeadline = 120 * time.Second
+
 // startSpawned starts every carried-in MCP server that declares a spawn
 // command, and does not return until each is accepting connections.
 //
@@ -251,7 +257,13 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		// --force also skips the uncommitted-changes guard.
 		if anchorCreated {
 			if err := runtime.Remove(cleanupCtx, runtime.Handle{ID: anchorName}); err != nil {
-				fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v\n", anchorName, err)
+				// With the anchor still attached, DeleteNetwork below fails
+				// silently, and the failure here is the only place that
+				// still has both names in hand - so name the network too and
+				// give the operator the exact cleanup, or a re-run with the
+				// same --name will fail at CreateNetwork with an
+				// unrelated-looking error.
+				fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v (network %s may now be orphaned; clean up with `container rm -f %s && container network delete %s`)\n", anchorName, err, netName, anchorName, netName)
 			}
 		}
 		if netCreated {
@@ -538,7 +550,7 @@ func pendingStart(status string) bool {
 // exited" — and mistaking the latter for the former would close the only
 // egress route out while the session still has its whole life ahead of it.
 func waitForExit(ctx context.Context, id string) error {
-	deadline := time.Now().Add(120 * time.Second)
+	deadline := time.Now().Add(waitForExitDeadline)
 	for {
 		status, err := runtime.Status(ctx, id)
 		if err != nil {
@@ -549,7 +561,7 @@ func waitForExit(ctx context.Context, id string) error {
 		case pendingStart(status):
 			// Not yet started; keep waiting, subject to the deadline below.
 			if time.Now().After(deadline) {
-				return fmt.Errorf("container %s never started within %s", id, 120*time.Second)
+				return fmt.Errorf("container %s was never observed running within %s: either it never started, or it exited too quickly to observe", id, waitForExitDeadline)
 			}
 			select {
 			case <-ctx.Done():
@@ -639,7 +651,11 @@ func Down(ctx context.Context, name string, force bool) error {
 	// guard, so making it the only way out is exactly backwards.
 	if st.Anchor != "" {
 		if err := runtime.Remove(ctx, runtime.Handle{ID: st.Anchor}); err != nil {
-			fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v\n", st.Anchor, err)
+			// With the anchor still attached, DeleteNetwork below fails
+			// silently and the state file is removed anyway, leaving an
+			// orphan container and an orphan network with no name left to
+			// act on - so name both here and give the exact cleanup.
+			fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v (network %s may now be orphaned; clean up with `container rm -f %s && container network delete %s`)\n", st.Anchor, err, st.Network, st.Anchor, st.Network)
 		}
 	}
 

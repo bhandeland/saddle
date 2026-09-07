@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 
 	"github.com/brandon/saddle/internal/egress"
 	"github.com/brandon/saddle/internal/hostsvc"
@@ -59,6 +60,14 @@ func Attach(ctx context.Context, name string, mode render.Mode) error {
 		if err := proxyPortFree(st.ProxyAddr); err != nil {
 			return err
 		}
+		// A state file written before Allow was recorded has ProxyAddr but
+		// no allowlist, so egress.New below rebinds deny-all on a session
+		// that originally permitted hosts. It fails closed, so this is not
+		// dangerous, but every request being blocked looks like a bug rather
+		// than a migration artifact.
+		if st.ProxyAddr != "" && len(st.Allow) == 0 && st.Egress != "none" {
+			fmt.Fprintf(os.Stderr, "saddle: session %s predates the recorded egress allowlist; reattaching with egress denied. Run `saddle down %s` and a fresh `saddle up` to restore it.\n", name, name)
+		}
 		px = egress.New(st.Allow)
 		if _, err := px.Listen(st.ProxyAddr); err != nil {
 			return fmt.Errorf("rebind egress proxy on %s: %w", st.ProxyAddr, err)
@@ -73,7 +82,7 @@ func Attach(ctx context.Context, name string, mode render.Mode) error {
 			_ = pr.Kill()
 		}
 	}()
-	for _, s := range st.Spawned {
+	for i, s := range st.Spawned {
 		if len(s.Cmd) == 0 {
 			continue
 		}
@@ -82,11 +91,28 @@ func Attach(ctx context.Context, name string, mode render.Mode) error {
 			return fmt.Errorf("restart %s: %w", s.Name, err)
 		}
 		procs = append(procs, pr)
+		// Rewrite the identity this entry reaps on. If this attach is
+		// SIGKILLed, the deferred Kill() above never runs and pr survives
+		// holding the gateway port; without updating PID/Cmd/Line here, a
+		// later `saddle down` still has the pid from the original `saddle
+		// up` on file, Reap correctly refuses to kill it because its command
+		// no longer matches, and the real orphan is never reaped - leaving
+		// the next attach to fail on bind or WaitReady with no hint why.
+		st.Spawned[i].PID = pr.PID
+		st.Spawned[i].Cmd = pr.Cmd
+		st.Spawned[i].Line = pr.Line
 		if s.Addr == "" {
 			continue // recorded before addresses were, so nothing to wait on
 		}
 		if err := hostsvc.WaitReady(s.Addr, SpawnReadyTimeout); err != nil {
 			return fmt.Errorf("restart %s: %w", s.Name, err)
+		}
+	}
+	if len(st.Spawned) > 0 {
+		// Best-effort: the session is usable without this, and failing the
+		// attach over it would be worse than leaving stale PIDs on file.
+		if err := Save(st); err != nil {
+			fmt.Fprintf(os.Stderr, "saddle: could not save updated process state: %v\n", err)
 		}
 	}
 
