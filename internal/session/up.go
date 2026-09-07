@@ -512,6 +512,19 @@ func printSummary(w io.Writer, st State, p profile.Profile, named bool, allow []
 	_, _ = fmt.Fprintf(w, "  attach    %s\n", mode)
 }
 
+// pendingStart reports whether a status means "this container has not run
+// yet", as opposed to "it ran and finished".
+//
+// Apple container has no distinct created state: a container that exists but
+// has never been started reports "stopped", the same string a container that
+// ran and exited reports. The two are indistinguishable from the status
+// alone, so both are treated as pending and the caller's deadline is what
+// separates them - a container that never starts fails when the deadline
+// expires.
+func pendingStart(status string) bool {
+	return status == "created" || status == "stopped"
+}
+
 // waitForExit blocks until the container has appeared as running and then,
 // in a second phase, until it is no longer listed as running.
 //
@@ -531,12 +544,12 @@ func waitForExit(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		switch status {
-		case "running":
-		case "created":
+		switch {
+		case status == "running":
+		case pendingStart(status):
 			// Not yet started; keep waiting, subject to the deadline below.
 			if time.Now().After(deadline) {
-				return fmt.Errorf("container %s never started", id)
+				return fmt.Errorf("container %s never started within %s", id, 120*time.Second)
 			}
 			select {
 			case <-ctx.Done():

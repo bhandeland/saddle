@@ -263,6 +263,27 @@ func TestEgressLabelUnknownForOlderStateFiles(t *testing.T) {
 	}
 }
 
+func TestPendingStart(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   bool
+	}{
+		{status: "created", want: true},
+		// Measured on Apple container 1.3.1: a container that exists but has
+		// never been started reports "stopped", indistinguishable from a
+		// container that ran and already exited. Both must be treated as
+		// pending, or waitForExit fails every cmux-mode `up` before cmux gets
+		// a chance to run `container start`. Do not "simplify" this away.
+		{status: "stopped", want: true},
+		{status: "running", want: false},
+		{status: "", want: false},
+	} {
+		if got := pendingStart(tc.status); got != tc.want {
+			t.Errorf("pendingStart(%q) = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+}
+
 func TestPrintSummaryShowsNameProfileWorktreeAndEgress(t *testing.T) {
 	st := State{
 		Name: "saddle-fix", Worktree: "/state/saddle-fix.d/worktree",
