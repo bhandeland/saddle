@@ -133,15 +133,11 @@ func cmdAttach(ctx context.Context, args []string) error {
 	if fs.NArg() < 1 {
 		return fmt.Errorf("usage: saddle attach <name> [--render terminal|cmux]")
 	}
-	st, err := session.Load(fs.Arg(0))
-	if err != nil {
-		return err
-	}
 	mode := render.Mode(*renderer)
 	if mode == "" {
 		mode = render.Auto()
 	}
-	return render.Attach(ctx, mode, st.Name, st.Worktree, runtime.AttachArgv(st.Container))
+	return session.Attach(ctx, fs.Arg(0), mode)
 }
 
 func cmdDown(ctx context.Context, args []string) error {

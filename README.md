@@ -89,6 +89,18 @@ If the command does not exist, or nothing is listening within 30 seconds,
 `saddle up` fails. A session whose memory server silently is not there is
 worse than one that refuses to start.
 
+Every session also runs a second, idle container called `<session>-anchor`,
+using the same image, with 1 cpu and 256m. It exists because Apple `container`
+puts a network's gateway address on the host only while a container on that
+network is running - and the egress proxy and any carried-in server bind
+exactly that address. The anchor holds it open, which is also what lets
+`saddle attach` bring a session's egress and memory server back after the
+original `saddle up` has exited. `saddle down` removes it; it never appears
+in `saddle ls`.
+
+The anchor puts one requirement on a profile's image: it must have `sleep`.
+Any image with `claude`, `git` and a shell does; a distroless one would not.
+
 ## Quick start
 
     saddle doctor          # check the setup

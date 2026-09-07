@@ -44,6 +44,23 @@ hand:
       without needing `--force`.
 - [ ] `saddle ls` after the above: confirm no stale entries remain.
 
+## Session network anchor
+
+- [ ] `saddle up`: confirm `container list` shows both `<name>` and
+      `<name>-anchor` running, and that `saddle ls` shows only the session.
+- [ ] `saddle down`: confirm both containers and the network are gone.
+- [ ] Remove the anchor by hand (`container rm -f <name>-anchor`), then
+      `saddle down`: confirm it warns and still tears everything else down,
+      without needing `--force`.
+- [ ] Exit the session so the original `saddle up` returns, then
+      `saddle attach <name>`: confirm egress to an allowlisted host works
+      again and the carried-in `recall` returns results. This is the case
+      that was broken before the anchor: the gateway address left the host
+      when the container stopped, so nothing could rebind it.
+- [ ] With one attach live, run `saddle attach <name>` again elsewhere:
+      confirm it refuses and names the proxy address rather than starting a
+      second proxy.
+
 ## Carried-in remem over HTTP
 
 - [ ] `saddle up` on a repo whose profile carries remem in. From inside the

@@ -117,6 +117,17 @@ func SkillMounts(home string, skills []string) []runtime.Mount {
 // A var, not a const, so tests need not wait it out.
 var SpawnReadyTimeout = 30 * time.Second
 
+// GatewayBindTimeout bounds the wait for a freshly started anchor to put the
+// session network's gateway address onto the host. Generous on purpose: the
+// alternative to waiting is a bind error the operator cannot act on.
+const GatewayBindTimeout = 30 * time.Second
+
+// waitForExitDeadline bounds how long waitForExit waits for a container to
+// appear as running before giving up. Named so the deadline used in the
+// timeout check and the one quoted in its error message can never drift
+// apart.
+const waitForExitDeadline = 120 * time.Second
+
 // startSpawned starts every carried-in MCP server that declares a spawn
 // command, and does not return until each is accepting connections.
 //
@@ -165,7 +176,7 @@ func startSpawned(p profile.Profile, timeout time.Duration) ([]*hostsvc.Proc, []
 		if err := hostsvc.WaitReady(addr, timeout); err != nil {
 			return fail(fmt.Errorf("carry_in.mcp.%s: %w", name, err))
 		}
-		rec = append(rec, Spawned{Name: name, PID: pr.PID, Cmd: pr.Cmd, Line: pr.Line})
+		rec = append(rec, Spawned{Name: name, PID: pr.PID, Cmd: pr.Cmd, Line: pr.Line, Addr: addr})
 	}
 	return procs, rec, nil
 }
@@ -209,6 +220,8 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		wtPath         string
 		netCreated     bool
 		netName        string
+		anchorCreated  bool
+		anchorName     string
 		px             *egress.Proxy
 		spawned        []*hostsvc.Proc
 		containerID    string
@@ -235,6 +248,23 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		}
 		if px != nil {
 			_ = px.Close()
+		}
+		// After the proxy and spawned services, which are bound to the
+		// gateway this anchor is holding up, and before DeleteNetwork, which
+		// cannot run while a container is still on the network. A failure
+		// here is reported and stepped over: aborting teardown now would
+		// leave a half-removed session that only --force can clear, and
+		// --force also skips the uncommitted-changes guard.
+		if anchorCreated {
+			if err := runtime.Remove(cleanupCtx, runtime.Handle{ID: anchorName}); err != nil {
+				// With the anchor still attached, DeleteNetwork below fails
+				// silently, and the failure here is the only place that
+				// still has both names in hand - so name the network too and
+				// give the operator the exact cleanup, or a re-run with the
+				// same --name will fail at CreateNetwork with an
+				// unrelated-looking error.
+				fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v (network %s may now be orphaned; clean up with `container rm -f %s && container network delete %s`)\n", anchorName, err, netName, anchorName, netName)
+			}
 		}
 		if netCreated {
 			_ = runtime.DeleteNetwork(cleanupCtx, netName)
@@ -307,6 +337,25 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		return State{}, err
 	}
 	netCreated = true
+
+	// 4b. Anchor. Apple container puts the gateway address on the host only
+	// while a container on the network is running, so nothing below can bind
+	// it until something is up. See
+	// docs/superpowers/specs/2026-09-06-session-network-anchor-design.md.
+	anchorName = AnchorName(name)
+	if _, err := runtime.Create(ctx, AnchorSpec(name, p.Image, netName)); err != nil {
+		return State{}, fmt.Errorf("create anchor: %w", err)
+	}
+	anchorCreated = true
+	if err := runtime.Start(ctx, anchorName); err != nil {
+		return State{}, fmt.Errorf("start anchor: %w", err)
+	}
+
+	// 4c. The address appears a beat after the start returns, so wait for it
+	// rather than assuming it.
+	if err := hostsvc.WaitBindable(n.Gateway, GatewayBindTimeout); err != nil {
+		return State{}, fmt.Errorf("session gateway never came up: %w", err)
+	}
 
 	// 5. Egress proxy bound to the gateway. --open-net means no filtering at
 	// all, so no proxy is started: a listening proxy nobody uses is just a
@@ -403,8 +452,9 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	st := State{
 		Name: name, Profile: p.Name, Repo: o.Repo, Worktree: wtPath,
 		Branch: "saddle/" + branch, Network: netName, Container: h.ID,
+		Anchor:    anchorName,
 		ProxyAddr: proxyAddr, Spawned: spawnedRec,
-		Egress: egressSummary(o.OpenNet, o.NoNet, allow),
+		Egress: egressSummary(o.OpenNet, o.NoNet, allow), Allow: allow,
 		Status: "running", Created: time.Now().UTC(),
 	}
 	if err := Save(st); err != nil {
@@ -474,6 +524,19 @@ func printSummary(w io.Writer, st State, p profile.Profile, named bool, allow []
 	_, _ = fmt.Fprintf(w, "  attach    %s\n", mode)
 }
 
+// pendingStart reports whether a status means "this container has not run
+// yet", as opposed to "it ran and finished".
+//
+// Apple container has no distinct created state: a container that exists but
+// has never been started reports "stopped", the same string a container that
+// ran and exited reports. The two are indistinguishable from the status
+// alone, so both are treated as pending and the caller's deadline is what
+// separates them - a container that never starts fails when the deadline
+// expires.
+func pendingStart(status string) bool {
+	return status == "created" || status == "stopped"
+}
+
 // waitForExit blocks until the container has appeared as running and then,
 // in a second phase, until it is no longer listed as running.
 //
@@ -487,18 +550,18 @@ func printSummary(w io.Writer, st State, p profile.Profile, named bool, allow []
 // exited" — and mistaking the latter for the former would close the only
 // egress route out while the session still has its whole life ahead of it.
 func waitForExit(ctx context.Context, id string) error {
-	deadline := time.Now().Add(120 * time.Second)
+	deadline := time.Now().Add(waitForExitDeadline)
 	for {
 		status, err := runtime.Status(ctx, id)
 		if err != nil {
 			return err
 		}
-		switch status {
-		case "running":
-		case "created":
+		switch {
+		case status == "running":
+		case pendingStart(status):
 			// Not yet started; keep waiting, subject to the deadline below.
 			if time.Now().After(deadline) {
-				return fmt.Errorf("container %s never started", id)
+				return fmt.Errorf("container %s was never observed running within %s: either it never started, or it exited too quickly to observe", id, waitForExitDeadline)
 			}
 			select {
 			case <-ctx.Done():
@@ -574,6 +637,25 @@ func Down(ctx context.Context, name string, force bool) error {
 	for _, s := range st.Spawned {
 		if err := hostsvc.Reap(s.PID, s.Cmd, s.Line); err != nil && !force {
 			return err
+		}
+	}
+
+	// After the spawned reap, which identifies processes bound to the
+	// gateway this anchor holds up, and before DeleteNetwork, which cannot
+	// remove a network that still has a container on it. Empty on state
+	// files written before anchors existed.
+	//
+	// Reported and stepped over, never fatal: this runs after the container
+	// is gone, so returning here would leave a session that only --force can
+	// remove - and --force is the flag that also skips the dirty-worktree
+	// guard, so making it the only way out is exactly backwards.
+	if st.Anchor != "" {
+		if err := runtime.Remove(ctx, runtime.Handle{ID: st.Anchor}); err != nil {
+			// With the anchor still attached, DeleteNetwork below fails
+			// silently and the state file is removed anyway, leaving an
+			// orphan container and an orphan network with no name left to
+			// act on - so name both here and give the exact cleanup.
+			fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v (network %s may now be orphaned; clean up with `container rm -f %s && container network delete %s`)\n", st.Anchor, err, st.Network, st.Anchor, st.Network)
 		}
 	}
 

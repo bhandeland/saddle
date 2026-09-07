@@ -25,16 +25,23 @@ type Spawned struct {
 	PID  int      `json:"pid"`
 	Cmd  []string `json:"cmd"`
 	Line string   `json:"line,omitempty"`
+	// Addr is where this server was told to listen, so a later attach can
+	// wait for it to come back without re-deriving it from the profile.
+	Addr string `json:"addr,omitempty"`
 }
 
 type State struct {
-	Name      string    `json:"name"`
-	Profile   string    `json:"profile"`
-	Repo      string    `json:"repo"`
-	Worktree  string    `json:"worktree"`
-	Branch    string    `json:"branch"`
-	Network   string    `json:"network"`
-	Container string    `json:"container"`
+	Name      string `json:"name"`
+	Profile   string `json:"profile"`
+	Repo      string `json:"repo"`
+	Worktree  string `json:"worktree"`
+	Branch    string `json:"branch"`
+	Network   string `json:"network"`
+	Container string `json:"container"`
+	// Anchor is the container that keeps the session network's gateway
+	// address on the host. Empty in state files written before anchors
+	// existed; teardown treats that as "nothing to remove".
+	Anchor    string    `json:"anchor,omitempty"`
 	ProxyAddr string    `json:"proxy_addr"`
 	Spawned   []Spawned `json:"spawned"`
 	// Egress records the containment posture the session was created with:
@@ -43,7 +50,11 @@ type State struct {
 	// signal is one stderr line at creation that scrolls away in cmux mode,
 	// and an operator with several sessions must still be able to answer
 	// "which of these is uncontained?".
-	Egress  string    `json:"egress"`
+	Egress string `json:"egress"`
+	// Allow is the effective egress allowlist, recorded because Egress is a
+	// lossy display summary ("api.anthropic.com +2") and attach must rebind
+	// the proxy with exactly the containment the session was created with.
+	Allow   []string  `json:"allow,omitempty"`
 	Status  string    `json:"status"`
 	Created time.Time `json:"created"`
 }

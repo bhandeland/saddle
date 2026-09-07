@@ -1,6 +1,6 @@
 # Session network anchor
 
-**Status:** approved, not implemented
+**Status:** implemented
 **Date:** 2026-09-06
 
 ## Problem
@@ -81,17 +81,22 @@ chosen: "container running" would stop meaning "session active", which moves
 `waitForExit`, `ls` and `down` all at once, on the code path where the last
 review already found two ordering-and-teardown bugs. It also leaves the full
 session VM running after claude exits, where the chosen design leaves only a
-64m anchor. Worth revisiting if attach/detach becomes a routine workflow
+256m anchor. Worth revisiting if attach/detach becomes a routine workflow
 rather than a recovery path.
 
 ## Design
 
 ### The anchor
 
+> Amended during implementation: the anchor is 256m, not the 64m first written
+> here. Apple container refuses any container under 200 MiB - "minimum memory
+> amount allowed is 200 MiB" - so 64m was never startable. 256m is that floor
+> plus a small margin.
+
 Every session owns a second container, `<session>-anchor`, whose only purpose
 is to hold the gateway address on the host. It runs the **profile's own
 image** - guaranteed present, since the session needs it anyway, so no second
-pull and nothing extra to keep current - with `sleep infinity`, 1 cpu, 64m, on
+pull and nothing extra to keep current - with `sleep infinity`, 1 cpu, 256m, on
 the session network. No mounts, no environment, no token. Nothing runs in it.
 It is a refcount held open.
 
