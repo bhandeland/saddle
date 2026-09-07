@@ -105,3 +105,55 @@ func TestLoadRejectsTraversalName(t *testing.T) {
 		t.Fatal("Load succeeded with traversal name")
 	}
 }
+
+func TestStateRoundTripsAnchorAllowlistAndSpawnedAddr(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	want := State{
+		Name:      "acme-main",
+		Anchor:    "acme-main-anchor",
+		Network:   "acme-main-net",
+		Container: "acme-main",
+		ProxyAddr: "192.168.65.1:54321",
+		Allow:     []string{"api.anthropic.com", "proxy.golang.org"},
+		Spawned: []Spawned{{
+			Name: "remem",
+			PID:  4242,
+			Cmd:  []string{"remem", "serve", "--http"},
+			Addr: "192.168.65.1:9100",
+		}},
+	}
+	if err := Save(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load("acme-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Anchor != want.Anchor {
+		t.Errorf("Anchor = %q, want %q", got.Anchor, want.Anchor)
+	}
+	if len(got.Allow) != 2 || got.Allow[0] != "api.anthropic.com" || got.Allow[1] != "proxy.golang.org" {
+		t.Errorf("Allow = %v, want %v", got.Allow, want.Allow)
+	}
+	if len(got.Spawned) != 1 || got.Spawned[0].Addr != "192.168.65.1:9100" {
+		t.Errorf("Spawned = %+v", got.Spawned)
+	}
+}
+
+// State files written before the anchor existed must still load: an operator
+// mid-upgrade has sessions on disk, and a parse failure would strand them
+// with no way to run `saddle down`.
+func TestStateWithoutAnchorStillLoads(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := Save(State{Name: "old-session", Container: "old-session"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load("old-session")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Anchor != "" {
+		t.Fatalf("Anchor = %q, want empty", got.Anchor)
+	}
+}
