@@ -422,7 +422,7 @@ Append to `internal/session/state_test.go`:
 
 ```go
 func TestStateRoundTripsAnchorAllowlistAndSpawnedAddr(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	want := State{
 		Name:      "acme-main",
@@ -460,7 +460,7 @@ func TestStateRoundTripsAnchorAllowlistAndSpawnedAddr(t *testing.T) {
 // mid-upgrade has sessions on disk, and a parse failure would strand them
 // with no way to run `saddle down`.
 func TestStateWithoutAnchorStillLoads(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	if err := Save(State{Name: "old-session", Container: "old-session"}); err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +474,7 @@ func TestStateWithoutAnchorStillLoads(t *testing.T) {
 }
 ```
 
-If `state_test.go` already sets `HOME` through a helper, use that helper instead of `t.Setenv` to match the file's existing style.
+`Dir()` honours `XDG_STATE_HOME` ahead of the home directory, which is how every other test in `state_test.go` isolates itself. Match that.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
