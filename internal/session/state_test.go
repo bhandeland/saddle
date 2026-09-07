@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -146,14 +147,66 @@ func TestStateRoundTripsAnchorAllowlistAndSpawnedAddr(t *testing.T) {
 // with no way to run `saddle down`.
 func TestStateWithoutAnchorStillLoads(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if err := Save(State{Name: "old-session", Container: "old-session"}); err != nil {
+
+	// Construct a pre-existing-format state file (old format, no anchor/allow/addr keys).
+	// This simulates what an operator would have on disk before the upgrade.
+	d, err := Dir()
+	if err != nil {
 		t.Fatal(err)
 	}
+	oldFormatJSON := `{
+  "name": "old-session",
+  "container": "old-session",
+  "network": "old-net",
+  "worktree": "/repo/old",
+  "profile": "go",
+  "repo": "/repo",
+  "branch": "main",
+  "proxy_addr": "192.168.1.1:9000",
+  "spawned": [
+    {
+      "name": "remem",
+      "pid": 1234,
+      "cmd": ["remem", "serve"]
+    }
+  ],
+  "egress": "open",
+  "status": "running",
+  "created": "2026-09-06T12:00:00Z"
+}`
+	filePath := filepath.Join(d, "old-session.json")
+	if err := os.WriteFile(filePath, []byte(oldFormatJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load should succeed and return zero values for the new fields.
 	got, err := Load("old-session")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+
+	// Verify pre-existing values survived.
+	if got.Name != "old-session" {
+		t.Errorf("Name = %q, want old-session", got.Name)
+	}
+	if got.Container != "old-session" {
+		t.Errorf("Container = %q, want old-session", got.Container)
+	}
+	if got.Network != "old-net" {
+		t.Errorf("Network = %q, want old-net", got.Network)
+	}
+	if len(got.Spawned) != 1 {
+		t.Errorf("Spawned length = %d, want 1", len(got.Spawned))
+	}
+
+	// Verify new fields are zero values.
 	if got.Anchor != "" {
-		t.Fatalf("Anchor = %q, want empty", got.Anchor)
+		t.Errorf("Anchor = %q, want empty", got.Anchor)
+	}
+	if len(got.Allow) > 0 {
+		t.Errorf("Allow = %v, want empty", got.Allow)
+	}
+	if len(got.Spawned) > 0 && got.Spawned[0].Addr != "" {
+		t.Errorf("Spawned[0].Addr = %q, want empty", got.Spawned[0].Addr)
 	}
 }
