@@ -628,6 +628,21 @@ func Down(ctx context.Context, name string, force bool) error {
 		}
 	}
 
+	// After the spawned reap, which identifies processes bound to the
+	// gateway this anchor holds up, and before DeleteNetwork, which cannot
+	// remove a network that still has a container on it. Empty on state
+	// files written before anchors existed.
+	//
+	// Reported and stepped over, never fatal: this runs after the container
+	// is gone, so returning here would leave a session that only --force can
+	// remove - and --force is the flag that also skips the dirty-worktree
+	// guard, so making it the only way out is exactly backwards.
+	if st.Anchor != "" {
+		if err := runtime.Remove(ctx, runtime.Handle{ID: st.Anchor}); err != nil {
+			fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v\n", st.Anchor, err)
+		}
+	}
+
 	_ = runtime.DeleteNetwork(ctx, st.Network)
 
 	if err := worktree.Remove(ctx, st.Repo, st.Worktree); err != nil && !force {
