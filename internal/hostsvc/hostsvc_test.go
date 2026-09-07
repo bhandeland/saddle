@@ -182,3 +182,26 @@ func TestReapOnAPidThatIsGoneIsNotAnError(t *testing.T) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+func TestWaitBindableReturnsImmediatelyForAnAddressWeHave(t *testing.T) {
+	if err := WaitBindable("127.0.0.1", 2*time.Second); err != nil {
+		t.Fatalf("WaitBindable(127.0.0.1): %v", err)
+	}
+}
+
+// 192.0.2.0/24 is TEST-NET-1: reserved for documentation and guaranteed not
+// to be assigned to an interface, so this is a deterministic negative rather
+// than a hope about the machine's configuration.
+func TestWaitBindableFailsForAnAddressWeDoNotHave(t *testing.T) {
+	start := time.Now()
+	err := WaitBindable("192.0.2.1", 300*time.Millisecond)
+	if err == nil {
+		t.Fatal("WaitBindable succeeded on an unassigned address")
+	}
+	if !strings.Contains(err.Error(), "192.0.2.1") {
+		t.Fatalf("error does not name the address: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("WaitBindable overran its timeout: %s", elapsed)
+	}
+}

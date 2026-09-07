@@ -129,6 +129,29 @@ func WaitReady(addr string, timeout time.Duration) error {
 	}
 }
 
+// WaitBindable polls until this process can bind host, or timeout expires.
+//
+// It exists because Apple container plumbs a network's gateway address onto
+// the host only while a container on that network is running: `container
+// network create` reports an ipv4Gateway that is not yet on any interface,
+// and the address appears a beat after `container start` returns. Callers
+// need to wait for the address rather than assume it, and the delay is real
+// but not a constant worth guessing at.
+func WaitBindable(host string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+		if err == nil {
+			_ = ln.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("hostsvc: %s never became bindable within %s", host, timeout)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // Reap kills pid, but only if its command line still identifies it as the
 // child we started.
 //
