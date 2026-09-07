@@ -90,5 +90,20 @@ func Attach(ctx context.Context, name string, mode render.Mode) error {
 		}
 	}
 
-	return render.Attach(ctx, mode, st.Name, st.Worktree, runtime.AttachArgv(st.Container))
+	if err := render.Attach(ctx, mode, st.Name, st.Worktree, runtime.AttachArgv(st.Container)); err != nil {
+		return err
+	}
+
+	// The proxy and spawned servers just rebuilt above live in this process,
+	// so they die the moment Attach returns. Terminal mode blocks inside
+	// render.Attach for the container's lifetime, so they survive. cmux mode
+	// returns as soon as the workspace is created, before the session has
+	// even started using them - without this wait the deferred cleanup above
+	// would tear the host side back down immediately after rebuilding it.
+	if mode == render.ModeCmux {
+		if err := waitForExit(ctx, st.Container); err != nil {
+			return err
+		}
+	}
+	return nil
 }
