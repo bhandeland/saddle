@@ -234,7 +234,7 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 			_ = pr.Kill()
 		}
 		if px != nil {
-			px.Close()
+			_ = px.Close()
 		}
 		if netCreated {
 			_ = runtime.DeleteNetwork(cleanupCtx, netName)
@@ -417,7 +417,7 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	// lifetime should not rest on the process exiting.
 	defer func() {
 		if px != nil {
-			px.Close()
+			_ = px.Close()
 		}
 		for _, pr := range spawned {
 			_ = pr.Kill()
@@ -467,11 +467,11 @@ func printSummary(w io.Writer, st State, p profile.Profile, named bool, allow []
 	case "none":
 		egressLine = "none  (all egress denied)"
 	}
-	fmt.Fprintf(w, "  session   %s\n", st.Name)
-	fmt.Fprintf(w, "  profile   %s (%s)\n", p.Name, how)
-	fmt.Fprintf(w, "  worktree  %s  [branch %s]\n", st.Worktree, st.Branch)
-	fmt.Fprintf(w, "  egress    %s\n", egressLine)
-	fmt.Fprintf(w, "  attach    %s\n", mode)
+	_, _ = fmt.Fprintf(w, "  session   %s\n", st.Name)
+	_, _ = fmt.Fprintf(w, "  profile   %s (%s)\n", p.Name, how)
+	_, _ = fmt.Fprintf(w, "  worktree  %s  [branch %s]\n", st.Worktree, st.Branch)
+	_, _ = fmt.Fprintf(w, "  egress    %s\n", egressLine)
+	_, _ = fmt.Fprintf(w, "  attach    %s\n", mode)
 }
 
 // waitForExit blocks until the container has appeared as running and then,

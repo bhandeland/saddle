@@ -68,7 +68,7 @@ func TestWaitReadyReturnsOnceSomethingIsListening(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	if err := WaitReady(ln.Addr().String(), 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWaitReadyTimesOutWhenNothingBinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	_ = ln.Close()
 
 	start := time.Now()
 	if err := WaitReady(addr, 300*time.Millisecond); err == nil {
@@ -97,7 +97,7 @@ func TestReapKillsAMatchingProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Kill()
+	defer func() { _ = p.Kill() }()
 	if err := Reap(p.PID, p.Cmd, p.Line); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestReapRefusesWhenTheCommandDoesNotMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Kill()
+	defer func() { _ = p.Kill() }()
 
 	// A mismatch is not an error: it says our child is already gone, which is
 	// the ordinary teardown outcome. Returning an error here used to abort
@@ -144,7 +144,7 @@ func TestStartAndReapHandleAShebangScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Kill()
+	defer func() { _ = p.Kill() }()
 
 	if p.Line == strings.Join(p.Cmd, " ") {
 		t.Fatalf("expected the observed line to differ from the argv, both were %q", p.Line)
@@ -168,7 +168,7 @@ func TestStartRecordsTheObservedCommandLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Kill()
+	defer func() { _ = p.Kill() }()
 	if p.Line != strings.Join(p.Cmd, " ") {
 		t.Fatalf("got %q, want %q", p.Line, strings.Join(p.Cmd, " "))
 	}

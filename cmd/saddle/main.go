@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -112,9 +113,9 @@ func cmdLs(ctx context.Context) error {
 		states = session.Reconcile(states, alive)
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPROFILE\tSTATUS\tEGRESS\tWORKTREE")
+	_, _ = fmt.Fprintln(w, "NAME\tPROFILE\tSTATUS\tEGRESS\tWORKTREE")
 	for _, s := range states {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Profile, s.Status, s.EgressLabel(), s.Worktree)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Profile, s.Status, s.EgressLabel(), s.Worktree)
 	}
 	return w.Flush()
 }
@@ -187,7 +188,7 @@ func cmdAuth() error {
 	fmt.Println()
 	// io.EOF with content is a paste without a trailing newline, which is
 	// fine; only an error with nothing to show for it is fatal.
-	if err != nil && !(err == io.EOF && tok != "") {
+	if err != nil && (!errors.Is(err, io.EOF) || tok == "") {
 		return err
 	}
 	if strings.TrimSpace(tok) == "" {

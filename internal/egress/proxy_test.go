@@ -36,7 +36,7 @@ func TestListenReturnsBoundAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 	if _, _, err := net.SplitHostPort(addr); err != nil {
 		t.Fatalf("Listen returned %q, not host:port: %v", addr, err)
 	}
@@ -48,13 +48,13 @@ func TestConnectToDeniedHostIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if _, err := c.Write([]byte("CONNECT denied.example:443 HTTP/1.1\r\nHost: denied.example:443\r\n\r\n")); err != nil {
 		t.Fatal(err)
 	}

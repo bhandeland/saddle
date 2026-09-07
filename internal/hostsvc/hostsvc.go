@@ -119,7 +119,7 @@ func WaitReady(addr string, timeout time.Duration) error {
 	for {
 		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil
 		}
 		if time.Now().After(deadline) {

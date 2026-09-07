@@ -236,10 +236,14 @@ func TestEgressSummaryDescribesPosture(t *testing.T) {
 		{name: "open", open: true, want: "open", wantLabel: "OPEN(!)"},
 		{name: "no-net", noNet: true, want: "none", wantLabel: "none"},
 		{name: "empty allowlist", want: "none", wantLabel: "none"},
-		{name: "one host", allow: []string{"api.anthropic.com"},
-			want: "api.anthropic.com", wantLabel: "api.anthropic.com"},
-		{name: "several hosts", allow: []string{"api.anthropic.com", "proxy.golang.org", "sum.golang.org"},
-			want: "api.anthropic.com +2", wantLabel: "api.anthropic.com +2"},
+		{
+			name: "one host", allow: []string{"api.anthropic.com"},
+			want: "api.anthropic.com", wantLabel: "api.anthropic.com",
+		},
+		{
+			name: "several hosts", allow: []string{"api.anthropic.com", "proxy.golang.org", "sum.golang.org"},
+			want: "api.anthropic.com +2", wantLabel: "api.anthropic.com +2",
+		},
 	} {
 		got := egressSummary(tc.open, tc.noNet, tc.allow)
 		if got != tc.want {
@@ -398,10 +402,12 @@ func TestStateRoundTripsSpawnedProcesses(t *testing.T) {
 
 // listenerCmd binds port and sleeps, standing in for a spawned MCP server.
 func listenerCmd(port int) []string {
-	return []string{"python3", "-c",
+	return []string{
+		"python3", "-c",
 		"import socket,time;s=socket.socket();" +
 			"s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);" +
-			"s.bind(('127.0.0.1'," + strconv.Itoa(port) + "));s.listen();time.sleep(30)"}
+			"s.bind(('127.0.0.1'," + strconv.Itoa(port) + "));s.listen();time.sleep(30)",
+	}
 }
 
 func freePort(t *testing.T) int {
@@ -410,6 +416,6 @@ func freePort(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	return ln.Addr().(*net.TCPAddr).Port
 }

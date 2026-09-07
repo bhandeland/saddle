@@ -1,0 +1,37 @@
+version: "2"
+
+# Output shape matters as much as the linter set here: an agent reads this
+# output on every iteration, so a finding is one line - no echoed source
+# line, no caret, no blank separator.
+output:
+  formats:
+    text:
+      print-issued-lines: false
+      print-linter-name: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    # saddle spawns host processes, removes worktrees and tears down networks
+    # on paths that must honour cancellation and must not lose the cause of a
+    # failure, so these three earn their place beyond the base set.
+    - contextcheck
+    - errorlint
+    - bodyclose
+
+# gofumpt and goimports ship inside golangci-lint, so `golangci-lint fmt`
+# applies both without a second and third pinned binary. Formatting is fixed,
+# not reported.
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+
+issues:
+  # No cap: a truncated report means a second run to see the rest.
+  max-issues-per-linter: 0
+  max-same-issues: 0

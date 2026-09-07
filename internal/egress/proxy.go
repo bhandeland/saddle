@@ -47,7 +47,7 @@ func (p *Proxy) Listen(addr string) (string, error) {
 		return "", err
 	}
 	p.srv = &http.Server{Handler: http.HandlerFunc(p.handle)}
-	go p.srv.Serve(ln)
+	go func() { _ = p.srv.Serve(ln) }()
 	return ln.Addr().String(), nil
 }
 
@@ -77,20 +77,26 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		upstream.Close()
+		_ = upstream.Close()
 		http.Error(w, "hijacking unsupported", http.StatusInternalServerError)
 		return
 	}
 	client, _, err := hj.Hijack()
 	if err != nil {
-		upstream.Close()
+		_ = upstream.Close()
 		return
 	}
 	if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
-		client.Close()
-		upstream.Close()
+		_ = client.Close()
+		_ = upstream.Close()
 		return
 	}
-	go func() { defer upstream.Close(); io.Copy(upstream, client) }()
-	go func() { defer client.Close(); io.Copy(client, upstream) }()
+	go func() {
+		defer func() { _ = upstream.Close() }()
+		_, _ = io.Copy(upstream, client)
+	}()
+	go func() {
+		defer func() { _ = client.Close() }()
+		_, _ = io.Copy(client, upstream)
+	}()
 }

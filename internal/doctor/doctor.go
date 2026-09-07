@@ -47,20 +47,26 @@ func decideCanaryAndListenerResults(serviceOK bool, lsofErr error, lsofOutput st
 	var rs []Result
 
 	if !serviceOK {
-		rs = append(rs, Result{Name: "can run containers", OK: false,
+		rs = append(rs, Result{
+			Name: "can run containers", OK: false,
 			Detail: "skipped: the container service is not running",
-			Fix:    "container system start, then re-run saddle doctor"})
+			Fix:    "container system start, then re-run saddle doctor",
+		})
 	}
 
 	if lsofErr != nil {
-		rs = append(rs, Result{Name: "host services exposed", OK: false,
+		rs = append(rs, Result{
+			Name: "host services exposed", OK: false,
 			Detail: "could not enumerate listeners: " + lsofErr.Error(),
-			Fix:    "ensure lsof is available, or check manually with: lsof -nP -iTCP -sTCP:LISTEN"})
+			Fix:    "ensure lsof is available, or check manually with: lsof -nP -iTCP -sTCP:LISTEN",
+		})
 	} else {
 		if exposed := ParseListeners(lsofOutput); len(exposed) > 0 {
-			rs = append(rs, Result{Name: "host services exposed", OK: false,
+			rs = append(rs, Result{
+				Name: "host services exposed", OK: false,
 				Detail: "reachable from saddle sessions: " + strings.Join(exposed, ", "),
-				Fix:    "bind these to 127.0.0.1, or accept that sessions can reach them"})
+				Fix:    "bind these to 127.0.0.1, or accept that sessions can reach them",
+			})
 		} else {
 			rs = append(rs, Result{Name: "host services exposed", OK: true})
 		}
@@ -76,24 +82,30 @@ func Run(ctx context.Context) []Result {
 	// below it, `--internal` isolation is unverified. Check it here so a
 	// `go build` install is told, not just a Homebrew one.
 	if v, err := macos.CheckFloor(); err != nil {
-		rs = append(rs, Result{Name: "macOS version", OK: false,
+		rs = append(rs, Result{
+			Name: "macOS version", OK: false,
 			Detail: err.Error(),
-			Fix:    fmt.Sprintf("upgrade to macOS %d (Tahoe) or newer; saddle's egress containment was only verified there", macos.Floor)})
+			Fix:    fmt.Sprintf("upgrade to macOS %d (Tahoe) or newer; saddle's egress containment was only verified there", macos.Floor),
+		})
 	} else {
 		rs = append(rs, Result{Name: "macOS version", OK: true, Detail: v})
 	}
 
 	if _, err := exec.LookPath("container"); err != nil {
-		rs = append(rs, Result{Name: "container installed", OK: false,
-			Detail: "container is not on PATH", Fix: "brew install container"})
+		rs = append(rs, Result{
+			Name: "container installed", OK: false,
+			Detail: "container is not on PATH", Fix: "brew install container",
+		})
 		return rs // everything else depends on this
 	}
 	rs = append(rs, Result{Name: "container installed", OK: true})
 
 	var serviceOK bool
 	if out, err := exec.CommandContext(ctx, "container", "system", "status").CombinedOutput(); err != nil {
-		rs = append(rs, Result{Name: "container service", OK: false,
-			Detail: strings.TrimSpace(string(out)), Fix: "container system start"})
+		rs = append(rs, Result{
+			Name: "container service", OK: false,
+			Detail: strings.TrimSpace(string(out)), Fix: "container system start",
+		})
 		serviceOK = false
 	} else {
 		rs = append(rs, Result{Name: "container service", OK: true})
@@ -106,9 +118,11 @@ func Run(ctx context.Context) []Result {
 		canary := exec.CommandContext(ctx, "container", "run", "--rm",
 			"docker.io/library/alpine:3.20", "true")
 		if out, err := canary.CombinedOutput(); err != nil {
-			rs = append(rs, Result{Name: "can run containers", OK: false,
+			rs = append(rs, Result{
+				Name: "can run containers", OK: false,
 				Detail: strings.TrimSpace(string(out)),
-				Fix:    "container system kernel set --recommended"})
+				Fix:    "container system kernel set --recommended",
+			})
 		} else {
 			rs = append(rs, Result{Name: "can run containers", OK: true})
 		}
@@ -117,8 +131,10 @@ func Run(ctx context.Context) []Result {
 	tok := exec.CommandContext(ctx, "security", "find-generic-password",
 		"-s", "saddle-claude-token", "-w")
 	if err := tok.Run(); err != nil {
-		rs = append(rs, Result{Name: "claude token", OK: false,
-			Detail: "no saddle-owned token in the keychain", Fix: "saddle auth"})
+		rs = append(rs, Result{
+			Name: "claude token", OK: false,
+			Detail: "no saddle-owned token in the keychain", Fix: "saddle auth",
+		})
 	} else {
 		rs = append(rs, Result{Name: "claude token", OK: true})
 	}
