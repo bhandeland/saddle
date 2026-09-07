@@ -7,12 +7,26 @@ write, a toolchain it cannot pollute, and a network it cannot escape.
 
 - macOS 26 (Tahoe) or newer
 - Apple `container` 1.3.1 or newer (`brew install container`)
+- A session image containing the `claude` CLI (see below)
 
 ## Install
 
 Build from source:
 
     go build -o saddle ./cmd/saddle
+
+## Build a session image
+
+saddle runs `claude` **inside** the container, and does not carry the host's
+copy in. So the image a profile names must already contain the Claude Code
+CLI; a bare `golang` or `node` image will start and then fail to run anything.
+The included Dockerfile builds one - Go, git and `claude` - and the build is
+deliberately not part of `make check`:
+
+    make image     # tags saddle-verify:local
+
+Any image works as long as `claude`, `git` and whatever toolchain the profile
+implies are on its PATH.
 
 A Homebrew tap is planned but **not yet published**, so this does not work
 yet:
@@ -28,7 +42,7 @@ per file:
     mkdir -p ~/.config/saddle/profiles
     cat > ~/.config/saddle/profiles/go.yaml <<'YAML'
     name: go
-    image: docker.io/library/golang:1.24
+    image: saddle-verify:local
     detect: [go.mod]
     resources:
       cpus: 4
@@ -39,7 +53,7 @@ per file:
         - proxy.golang.org
         - sum.golang.org
     carry_in:
-      skills: [remem, superpowers]
+      skills: [remem]
       mcp:
         remem:
           spawn: ["remem", "serve", "--http",
@@ -48,12 +62,14 @@ per file:
           url: http://{{gateway}}:9100/mcp
     YAML
 
-`detect` lists filenames; a profile matches when any of them is present at
+The image must contain `claude`; `saddle-verify:local` above is the one
+`make image` builds. `detect` lists filenames; a profile matches when any of them is present at
 the top of the repository, which is what lets `saddle up` choose without
 `--profile`. `egress.allow` is the whole allowlist - matching is exact and
 case-insensitive on the hostname, with no wildcards, and everything else is
 denied. `carry_in.skills` names directories under `~/.claude/skills`, which
-are mounted read-only. String values may use `{{gateway}}`, `{{proxy_port}}`,
+are mounted read-only - a plugin that installs skills elsewhere cannot be
+carried in this way. String values may use `{{gateway}}`, `{{proxy_port}}`,
 and `{{repo}}`, which are substituted once the session's network exists.
 `{{repo}}` is the name of the repository the session was opened on, resolved
 the way git resolves it - a subdirectory or a linked worktree both name the

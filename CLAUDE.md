@@ -22,17 +22,24 @@ underneath a branch. Nothing is taken from the ambient PATH.
 The test stage deliberately does not pass `-count=1`: a cached pass is free and
 silent. `-race` and coverage belong in CI, not in this loop.
 
-## There is no `make image`
+## `make image`
 
-saddle does not build a container image. It runs a **prebuilt upstream image**,
-named by the `image:` field of a profile and handed to the Apple `container`
-CLI (`internal/profile`, `internal/runtime/applecontainer.go`). There is no
-Dockerfile in this repository, so there is no container build to run, nothing
-for hadolint to lint, and no locally-built image to scan.
+`make image` builds the **session image** - the environment Claude Code runs
+in inside a container. It is not a build of saddle, which runs on the host.
 
-If a Dockerfile is ever added, the container build belongs in a separate
-`make image` target and must stay out of `make check`: the inner loop should
-never wait on an image build.
+Run it only when `Dockerfile` or its inputs change. It is deliberately not a
+stage of `make check`: it takes minutes, and the inner loop must never wait on
+an image build.
+
+    make image     # tags saddle-verify:local; override with IMAGE=...
+
+saddle runs `claude` inside the container (`internal/session/up.go`) and does
+not mount the host's copy in, so the image a profile names must contain the
+`claude` CLI. An image without it starts and then fails to run anything.
+
+hadolint and trivy are deliberately absent: the Dockerfile is two stages and
+tracked, and neither tool is among the three dependencies this project's gate
+is allowed.
 
 ## Manual verification
 

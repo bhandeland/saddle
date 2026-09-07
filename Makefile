@@ -1,9 +1,8 @@
 # Quality gate.
 #
 #   make check   fmt -> lint -> test. The verification command for code changes.
-#   make image   does not exist: see CLAUDE.md. saddle runs a prebuilt upstream
-#                image through the Apple `container` CLI and builds none itself,
-#                so there is no container stage to keep out of the inner loop.
+#   make image   builds the session image. Slow, and deliberately NOT part of
+#                check: the inner loop must never wait on an image build.
 #
 # Tools are pinned and installed into ./bin on first use. Bumping a version
 # here reinstalls; nothing is taken from the ambient PATH.
@@ -17,7 +16,7 @@ GOTESTSUM := $(BIN)/gotestsum-$(GOTESTSUM_VERSION)
 
 # check's stages run in order and stop at the first failure, which -j defeats.
 .NOTPARALLEL:
-.PHONY: check fmt lint test tools
+.PHONY: check fmt lint test image tools
 
 check: fmt lint test
 
@@ -50,3 +49,16 @@ $(GOTESTSUM):
 	@rm -f $(BIN)/gotestsum*
 	@GOBIN=$(BIN) go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
 	@mv $(BIN)/gotestsum $@
+
+# The session image: the environment Claude Code runs in inside a container,
+# not a build of saddle, which runs on the host. Out of `check` on purpose -
+# it is minutes, not milliseconds, and it only changes when the Dockerfile
+# does. -q keeps a successful build to a single line; a failure still prints.
+#
+# A cold build is minutes of total silence under -q, which is hard to tell
+# from a hang, so BUILD_QUIET is overridable: `make image BUILD_QUIET=`.
+IMAGE ?= saddle-verify:local
+BUILD_QUIET ?= --quiet
+
+image:
+	@container build $(BUILD_QUIET) --tag $(IMAGE) --file Dockerfile .

@@ -1,0 +1,3 @@
+# Nothing but the Dockerfile is needed; sending the repo would be waste.
+*
+!Dockerfile
