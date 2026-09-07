@@ -417,6 +417,18 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	// 9. Container.
 	env := map[string]string{
 		"CLAUDE_CODE_OAUTH_TOKEN": token,
+		// Claude Code refuses --dangerously-skip-permissions when it is
+		// running as root, and the container runs as root: the skill mounts
+		// below target /root/.claude/skills. Without this the session's
+		// claude exits immediately and saddle can never run anything.
+		//
+		// IS_SANDBOX is that guard's intended escape hatch, and the claim it
+		// makes is one saddle is in a position to make: the container is on
+		// an isolated network reachable only through the egress proxy, and
+		// the only host path mounted into it is the session's own worktree,
+		// which claude is there to edit. Skipping permission prompts inside
+		// that is the whole point of the containment - ClaudeCmd says so.
+		"IS_SANDBOX": "1",
 	}
 	if o.OpenNet {
 		fmt.Fprintln(os.Stderr, "WARNING: --open-net disables all egress filtering")
