@@ -117,6 +117,11 @@ func SkillMounts(home string, skills []string) []runtime.Mount {
 // A var, not a const, so tests need not wait it out.
 var SpawnReadyTimeout = 30 * time.Second
 
+// GatewayBindTimeout bounds the wait for a freshly started anchor to put the
+// session network's gateway address onto the host. Generous on purpose: the
+// alternative to waiting is a bind error the operator cannot act on.
+const GatewayBindTimeout = 30 * time.Second
+
 // startSpawned starts every carried-in MCP server that declares a spawn
 // command, and does not return until each is accepting connections.
 //
@@ -165,7 +170,7 @@ func startSpawned(p profile.Profile, timeout time.Duration) ([]*hostsvc.Proc, []
 		if err := hostsvc.WaitReady(addr, timeout); err != nil {
 			return fail(fmt.Errorf("carry_in.mcp.%s: %w", name, err))
 		}
-		rec = append(rec, Spawned{Name: name, PID: pr.PID, Cmd: pr.Cmd, Line: pr.Line})
+		rec = append(rec, Spawned{Name: name, PID: pr.PID, Cmd: pr.Cmd, Line: pr.Line, Addr: addr})
 	}
 	return procs, rec, nil
 }
@@ -209,6 +214,8 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		wtPath         string
 		netCreated     bool
 		netName        string
+		anchorCreated  bool
+		anchorName     string
 		px             *egress.Proxy
 		spawned        []*hostsvc.Proc
 		containerID    string
@@ -235,6 +242,17 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		}
 		if px != nil {
 			_ = px.Close()
+		}
+		// After the proxy and spawned services, which are bound to the
+		// gateway this anchor is holding up, and before DeleteNetwork, which
+		// cannot run while a container is still on the network. A failure
+		// here is reported and stepped over: aborting teardown now would
+		// leave a half-removed session that only --force can clear, and
+		// --force also skips the uncommitted-changes guard.
+		if anchorCreated {
+			if err := runtime.Remove(cleanupCtx, runtime.Handle{ID: anchorName}); err != nil {
+				fmt.Fprintf(os.Stderr, "saddle: could not remove anchor %s: %v\n", anchorName, err)
+			}
 		}
 		if netCreated {
 			_ = runtime.DeleteNetwork(cleanupCtx, netName)
@@ -307,6 +325,25 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		return State{}, err
 	}
 	netCreated = true
+
+	// 4b. Anchor. Apple container puts the gateway address on the host only
+	// while a container on the network is running, so nothing below can bind
+	// it until something is up. See
+	// docs/superpowers/specs/2026-09-06-session-network-anchor-design.md.
+	anchorName = AnchorName(name)
+	if _, err := runtime.Create(ctx, AnchorSpec(name, p.Image, netName)); err != nil {
+		return State{}, fmt.Errorf("create anchor: %w", err)
+	}
+	anchorCreated = true
+	if err := runtime.Start(ctx, anchorName); err != nil {
+		return State{}, fmt.Errorf("start anchor: %w", err)
+	}
+
+	// 4c. The address appears a beat after the start returns, so wait for it
+	// rather than assuming it.
+	if err := hostsvc.WaitBindable(n.Gateway, GatewayBindTimeout); err != nil {
+		return State{}, fmt.Errorf("session gateway never came up: %w", err)
+	}
 
 	// 5. Egress proxy bound to the gateway. --open-net means no filtering at
 	// all, so no proxy is started: a listening proxy nobody uses is just a
@@ -403,8 +440,9 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 	st := State{
 		Name: name, Profile: p.Name, Repo: o.Repo, Worktree: wtPath,
 		Branch: "saddle/" + branch, Network: netName, Container: h.ID,
+		Anchor:    anchorName,
 		ProxyAddr: proxyAddr, Spawned: spawnedRec,
-		Egress: egressSummary(o.OpenNet, o.NoNet, allow),
+		Egress: egressSummary(o.OpenNet, o.NoNet, allow), Allow: allow,
 		Status: "running", Created: time.Now().UTC(),
 	}
 	if err := Save(st); err != nil {
