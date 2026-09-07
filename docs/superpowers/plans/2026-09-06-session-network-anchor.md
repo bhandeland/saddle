@@ -4,7 +4,7 @@
 
 **Goal:** Give every saddle session an anchor container that keeps its network's gateway address plumbed onto the host, so the egress proxy and spawned host services can bind it - and so `saddle attach` can rebind them after the original `up` exits.
 
-**Architecture:** Apple `container` materialises a network's gateway address on the host only while a container on that network is *running*, and removes it when the last one stops. A per-session anchor container (`<session>-anchor`, the profile's own image, `sleep infinity`, 1 cpu / 64m) holds that address open for the session's lifetime. `Up` starts it before binding anything; `Down` removes it after the session container and before the network; `attach` ensures it is running before rebinding the proxy at the exact recorded address.
+**Architecture:** Apple `container` materialises a network's gateway address on the host only while a container on that network is *running*, and removes it when the last one stops. A per-session anchor container (`<session>-anchor`, the profile's own image, `sleep infinity`, 1 cpu / 256m) holds that address open for the session's lifetime. `Up` starts it before binding anything; `Down` removes it after the session container and before the network; `attach` ensures it is running before rebinding the proxy at the exact recorded address.
 
 **Tech Stack:** Go 1.24, Apple `container` 1.3.1 CLI, no new dependencies.
 
@@ -14,7 +14,7 @@
 
 - macOS 26+ and Apple `container` 1.3.1+. Nothing here works on Docker.
 - The anchor runs the **profile's own image**, never a hardcoded one. That image must contain `sleep`.
-- Anchor resources are exactly 1 cpu and `"64m"`.
+- Anchor resources are exactly 1 cpu and `"256m"`. Apple container refuses anything under 200 MiB ("minimum memory amount allowed is 200 MiB"), verified on this machine; 256m is that floor plus a small margin, because an anchor that OOMs silently takes the session egress with it and nothing watches for that.
 - An anchor is created for **every** session, including `--open-net`, because spawned host services bind the gateway even when saddle starts no proxy.
 - Teardown failures on the anchor **warn on stderr and continue**. They must never abort the rest of a teardown - a partial teardown produces a session removable only with `--force`, which also bypasses the uncommitted-changes guard.
 - No new Go dependencies. The quality gate allows only gofumpt, golangci-lint and gotestsum.
@@ -174,7 +174,7 @@ func TestGatewayBindableOnlyWhileAContainerRuns(t *testing.T) {
 		Network: netName,
 		Cmd:     []string{"sleep", "300"},
 		CPUs:    1,
-		Memory:  "64m",
+		Memory:  "256m",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -318,8 +318,8 @@ func TestAnchorSpecIsSmallAndLongLived(t *testing.T) {
 	if s.CPUs != 1 {
 		t.Errorf("CPUs = %d, want 1", s.CPUs)
 	}
-	if s.Memory != "64m" {
-		t.Errorf("Memory = %q, want 64m", s.Memory)
+	if s.Memory != "256m" {
+		t.Errorf("Memory = %q, want 256m", s.Memory)
 	}
 	want := []string{"sleep", "infinity"}
 	if len(s.Cmd) != len(want) || s.Cmd[0] != want[0] || s.Cmd[1] != want[1] {
@@ -355,7 +355,7 @@ import "github.com/brandon/saddle/internal/runtime"
 // anything runs.
 const (
 	anchorCPUs   = 1
-	anchorMemory = "64m"
+	anchorMemory = "256m"
 )
 
 // AnchorName names the anchor container belonging to a session.
@@ -958,7 +958,7 @@ In the "Create a profile" section, after the paragraph describing `carry_in.mcp.
 
 ```markdown
 Every session also runs a second, idle container called `<session>-anchor`,
-using the same image, with 1 cpu and 64m. It exists because Apple `container`
+using the same image, with 1 cpu and 256m. It exists because Apple `container`
 puts a network's gateway address on the host only while a container on that
 network is running - and the egress proxy and any carried-in server bind
 exactly that address. The anchor holds it open, which is also what lets
