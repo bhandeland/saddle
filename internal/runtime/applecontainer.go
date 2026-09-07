@@ -180,6 +180,16 @@ func AttachArgv(id string) []string {
 	return []string{"container", "start", "-ai", id}
 }
 
+// Start starts an existing container without attaching to it.
+//
+// AttachArgv's `container start -ai` both starts and attaches, which is what
+// an operator wants and what the session container uses. The anchor needs the
+// start without the attach: nothing ever looks at its output.
+func Start(ctx context.Context, id string) error {
+	_, err := run(ctx, "start", id)
+	return err
+}
+
 func Remove(ctx context.Context, h Handle) error {
 	_, err := run(ctx, "rm", "-f", h.ID)
 	return err

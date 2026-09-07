@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -122,6 +123,90 @@ func TestNetworkContractPositiveControl(t *testing.T) {
 	}
 	if strings.Contains(string(out), "NOINTERNET") || !strings.Contains(string(out), "INTERNET") {
 		t.Fatalf("positive control failed: an unisolated container reported NOINTERNET; the probe script's assertion mechanism is broken, so TestNetworkContract's pass proves nothing\n%s", out)
+	}
+}
+
+// bindable reports whether this process can open a TCP listener on host.
+func bindable(host string) bool {
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+// TestGatewayBindableOnlyWhileAContainerRuns pins the fact the session
+// network anchor exists for. A network's gateway address is reported by
+// `container network inspect` from the moment the network is created, but it
+// is not on a host interface until a container on that network *starts*, and
+// it leaves again when the last running container stops. Nothing on the host
+// can bind it outside that window.
+//
+// If this test ever fails, the anchor may no longer be necessary - but read
+// the spec before deleting anything, because Up, Down and attach all assume
+// the address behaves this way.
+func TestGatewayBindableOnlyWhileAContainerRuns(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	const netName = "saddle-gwcontract"
+	_ = DeleteNetwork(ctx, netName) // a previous crashed run
+	n, err := CreateNetwork(ctx, netName, false)
+	if err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	defer func() { _ = DeleteNetwork(context.WithoutCancel(ctx), netName) }()
+
+	if bindable(n.Gateway) {
+		t.Fatalf("gateway %s was bindable straight after network create", n.Gateway)
+	}
+
+	h, err := Create(ctx, Spec{
+		Name:    "saddle-gwcontract-c",
+		Image:   img,
+		Network: netName,
+		Cmd:     []string{"sleep", "300"},
+		CPUs:    1,
+		Memory:  "256m",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = Remove(context.WithoutCancel(ctx), h) }()
+
+	if bindable(n.Gateway) {
+		t.Fatalf("gateway %s was bindable after container create, before start", n.Gateway)
+	}
+
+	if err := Start(ctx, h.ID); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := waitBindableForTest(n.Gateway, 30*time.Second, true); err != nil {
+		t.Fatalf("after start: %v", err)
+	}
+
+	if _, err := run(ctx, "stop", h.ID); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if err := waitBindableForTest(n.Gateway, 30*time.Second, false); err != nil {
+		t.Fatalf("after stop: %v", err)
+	}
+}
+
+// waitBindableForTest polls until bindable(host) == want, so the assertions
+// above tolerate the lag between the CLI returning and the host's interfaces
+// settling, without asserting a specific lag.
+func waitBindableForTest(host string, timeout time.Duration, want bool) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if bindable(host) == want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("gateway %s bindable != %v after %s", host, want, timeout)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
