@@ -1,6 +1,6 @@
 # Session network anchor
 
-**Status:** approved, not implemented
+**Status:** implemented
 **Date:** 2026-09-06
 
 ## Problem
