@@ -26,8 +26,8 @@ import (
 // ended up with, as ps renders it. The two differ whenever something rewrites
 // argv, and the case that matters here is the shebang: exec'ing a script
 // drops the caller's argv[0] and prepends the interpreter, so a script
-// started as "remem serve --http" shows up as
-// ".../Python .../remem serve --http". Recording only the argv we asked for
+// started as "bag serve --http" shows up as
+// ".../Python .../bag serve --http". Recording only the argv we asked for
 // would mean the identity check in Reap could never match a script.
 type Proc struct {
 	PID  int

@@ -48,14 +48,14 @@ func IsDirty(ctx context.Context, dest string) (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
-// RepoName names the repository dir belongs to, by the same rule remem uses
+// RepoName names the repository dir belongs to, by the same rule saddlebag uses
 // to resolve a project.
 //
-// remem's resolve_project asks git for --git-common-dir and names the
+// saddlebag's resolve_project asks git for --git-common-dir and names the
 // directory holding it, so a subdirectory of a repository and a linked
 // worktree of it both resolve to the *main* repository's name. Deriving the
 // name any other way - filepath.Base of the path handed to `saddle up`, say -
-// would silently disagree with remem for exactly those two cases, and a
+// would silently disagree with saddlebag for exactly those two cases, and a
 // session that files its memories under a project name nobody queries is
 // worse than one that files none: the writes succeed and never surface.
 //

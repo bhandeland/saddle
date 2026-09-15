@@ -141,7 +141,7 @@ func TestRepoNameFromARelativePath(t *testing.T) {
 }
 
 func TestRepoNameFromASubdirectoryNamesTheRepository(t *testing.T) {
-	// remem's resolve_project uses --git-common-dir, so a subdirectory
+	// saddlebag's resolve_project uses --git-common-dir, so a subdirectory
 	// resolves to the repository. filepath.Base would have said "session".
 	repo := newNamedRepo(t, "acme-tools")
 	sub := filepath.Join(repo, "internal", "session")
@@ -154,7 +154,7 @@ func TestRepoNameFromASubdirectoryNamesTheRepository(t *testing.T) {
 }
 
 func TestRepoNameInALinkedWorktreeNamesTheMainRepository(t *testing.T) {
-	// A worktree shares the main repository's memories, because remem
+	// A worktree shares the main repository's memories, because saddlebag
 	// resolves it to the common dir's parent.
 	repo := newNamedRepo(t, "acme-tools")
 	dest := filepath.Join(t.TempDir(), "some-feature")

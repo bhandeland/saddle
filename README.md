@@ -53,10 +53,10 @@ per file:
         - proxy.golang.org
         - sum.golang.org
     carry_in:
-      skills: [remem]
+      skills: [bag]
       mcp:
-        remem:
-          spawn: ["remem", "serve", "--http",
+        saddlebag:
+          spawn: ["bag", "serve", "--http",
                   "--host", "{{gateway}}", "--port", "9100",
                   "--project", "{{repo}}"]
           url: http://{{gateway}}:9100/mcp

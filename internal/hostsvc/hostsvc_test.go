@@ -132,7 +132,7 @@ func TestStartAndReapHandleAShebangScript(t *testing.T) {
 	// The regression this package exists to avoid. Exec'ing a shebang script
 	// makes the kernel rewrite argv: it drops the caller's argv[0] and
 	// prepends the interpreter, so the live command line is not the argv we
-	// asked for. remem - the one command this feature was written to run - is
+	// asked for. bag - the one command this feature was written to run - is
 	// such a script, so matching on the joined argv alone matched nothing.
 	dir := t.TempDir()
 	script := filepath.Join(dir, "sleeper.sh")

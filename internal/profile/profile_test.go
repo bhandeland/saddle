@@ -182,7 +182,7 @@ carry_in:
 
 func TestTheREADMEExampleProfileParses(t *testing.T) {
 	// The README is the only profile in the repository. If its spawn line
-	// drifts from `remem serve`'s actual flags, every new user's first
+	// drifts from `bag serve`'s actual flags, every new user's first
 	// session fails.
 	data, err := os.ReadFile("../../README.md")
 	if err != nil {
@@ -209,8 +209,8 @@ func TestTheREADMEExampleProfileParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("README example does not parse: %v", err)
 	}
-	spawn := p.CarryIn.MCP["remem"].Spawn
-	want := []string{"remem", "serve", "--http", "--host", "{{gateway}}", "--port", "9100", "--project", "{{repo}}"}
+	spawn := p.CarryIn.MCP["saddlebag"].Spawn
+	want := []string{"bag", "serve", "--http", "--host", "{{gateway}}", "--port", "9100", "--project", "{{repo}}"}
 	if len(spawn) != len(want) {
 		t.Fatalf("README example spawn: got %v want %v", spawn, want)
 	}
@@ -220,7 +220,7 @@ func TestTheREADMEExampleProfileParses(t *testing.T) {
 		}
 	}
 	out := Expand(p, map[string]string{"gateway": "10.0.0.1", "repo": "r", "proxy_port": "1"})
-	for _, a := range out.CarryIn.MCP["remem"].Spawn {
+	for _, a := range out.CarryIn.MCP["saddlebag"].Spawn {
 		if strings.Contains(a, "{{") {
 			t.Fatalf("unexpanded placeholder in %q", a)
 		}
