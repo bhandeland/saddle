@@ -449,6 +449,8 @@ func Up(ctx context.Context, o UpOptions) (State, error) {
 		}, SkillMounts(home, p.CarryIn.Skills)...),
 		CPUs:   p.Resources.CPUs,
 		Memory: p.Resources.Memory,
+		// claude picks --print mode when stdin is not a terminal.
+		TTY: true,
 	})
 	if err != nil {
 		return State{}, err

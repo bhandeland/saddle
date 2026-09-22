@@ -35,6 +35,10 @@ type Spec struct {
 	Mounts  []Mount
 	CPUs    int
 	Memory  string
+	// TTY opens a terminal with the process and keeps stdin open. It must be
+	// set at create time: `container start -ai` attaches to the stdio the
+	// container already has and cannot add a terminal to it.
+	TTY bool
 }
 
 type Handle struct {
@@ -119,6 +123,9 @@ func validateMounts(ms []Mount) error {
 
 func createArgs(s Spec) []string {
 	args := []string{"create", "--name", s.Name}
+	if s.TTY {
+		args = append(args, "--tty", "--interactive")
+	}
 	if s.Network != "" {
 		args = append(args, "--network", s.Network)
 	}

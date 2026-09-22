@@ -110,6 +110,27 @@ func TestParseStatusHeaderOnlyReturnsEmpty(t *testing.T) {
 	}
 }
 
+// `container start -ai` attaches to the stdio the container was created with;
+// it cannot add a terminal after the fact. Without --tty at create time claude
+// sees a pipe on stdin and falls into --print mode, which exits at once.
+func TestCreateArgsOpensTTYWhenAsked(t *testing.T) {
+	joined := strings.Join(createArgs(Spec{Name: "x", Image: "alpine", TTY: true}), " ")
+	for _, want := range []string{"--tty", "--interactive"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("createArgs missing %q\ngot: %s", want, joined)
+		}
+	}
+}
+
+func TestCreateArgsOmitsTTYByDefault(t *testing.T) {
+	joined := strings.Join(createArgs(Spec{Name: "x", Image: "alpine"}), " ")
+	for _, unwanted := range []string{"--tty", "--interactive"} {
+		if strings.Contains(joined, unwanted) {
+			t.Errorf("createArgs has %q without TTY set\ngot: %s", unwanted, joined)
+		}
+	}
+}
+
 func TestCreateArgsMarksReadOnlyMounts(t *testing.T) {
 	args := createArgs(Spec{
 		Name: "x", Image: "alpine",
