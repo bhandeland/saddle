@@ -20,7 +20,7 @@ hand:
 - [ ] Egress: from inside the session, confirm a request to a
       non-allowlisted host is denied, and a request to a host passed via
       `--allow` (or present in the profile) succeeds.
-- [ ] Egress, *no second route out*: the check above only exercises the
+- [x] Egress, *no second route out*: the check above only exercises the
       proxy, and would still pass if the container had another way to the
       internet. So verify the containment claim directly: inside the
       session, unset `HTTPS_PROXY` and `HTTP_PROXY` and confirm a direct
@@ -28,6 +28,16 @@ hand:
       `curl --max-time 10 https://1.1.1.1/` and
       `curl --max-time 10 https://example.com/`. Both must fail. A success
       means the isolation is not holding and no allowlist is meaningful.
+      Verified 2026-09-08, but from the session's *anchor* container, not the
+      session container: `claude` is the session container's entrypoint, so it
+      exits the moment it starts (see the TTY blocker). The anchor is on the
+      same network, from the same image, with one interface and one default
+      route, and carries no proxy vars at all. All six probes failed - by IP
+      with a connection timeout, by name with DNS itself timing out, the
+      allowlisted host included. Positive control: a host listener on the
+      gateway answered 200 from inside the container, so the failures are
+      containment and not a dead stack. Redo this from a real session once
+      the TTY blocker is gone.
 - [ ] `--open-net`: bring a session up with `--open-net` and confirm the
       warning is printed, that unrestricted internet access genuinely works
       from inside it, and that `saddle ls` flags the session's EGRESS
@@ -61,21 +71,25 @@ hand:
       confirm it refuses and names the proxy address rather than starting a
       second proxy.
 
-## Carried-in remem over HTTP
+## Carried-in saddlebag over HTTP
 
-- [ ] `saddle up` on a repo whose profile carries remem in. From inside the
+- [ ] `saddle up` on a repo whose profile carries saddlebag in. From inside the
       session, call `recall` and confirm results come back.
-- [ ] From inside the session, write an entry with no explicit `project`.
+- [x] From inside the session, write an entry with no explicit `project`.
       On the host, confirm it filed under the repository's name and not under
       the directory `saddle up` was run from. This is the silent failure the
       pinned project exists to prevent, so check it rather than assume it.
-- [ ] Confirm the entry's session id is null rather than the launching
+- [x] Confirm the entry's session id is null rather than the launching
       shell's.
-- [ ] `saddle down`, then `ps ax | grep 'remem serve'` - no survivor.
+      Both verified 2026-09-08. The check only discriminates if the server's
+      cwd differs from the pinned project - `hostsvc` never sets `c.Dir`, so
+      the spawned remem inherits saddle's cwd - so the server was run from
+      /tmp. The entry filed under `saddle` with a null session id.
+- [ ] `saddle down`, then `ps ax | grep 'bag serve'` - no survivor.
 - [ ] Kill the `saddle up` process with SIGKILL rather than exiting cleanly,
       so the child is orphaned. Then `saddle down` and confirm it reaps the
       orphan.
-- [ ] Two sessions at once on different repos: confirm both remem servers
+- [ ] Two sessions at once on different repos: confirm both saddlebag servers
       bind :9100 on their own gateways without colliding, and that each files
       entries under its own project.
 - [ ] A profile whose `spawn` names a nonexistent binary fails `saddle up`
