@@ -50,6 +50,7 @@ per file:
     egress:
       allow:
         - api.anthropic.com
+        - platform.claude.com
         - proxy.golang.org
         - sum.golang.org
     carry_in:
