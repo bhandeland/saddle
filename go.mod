@@ -1,4 +1,4 @@
-module github.com/brandon/saddle
+module gitlab.com/nighthawk-oss/saddle
 
 go 1.24
 

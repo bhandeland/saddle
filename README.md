@@ -31,7 +31,7 @@ implies are on its PATH.
 A Homebrew tap is planned but **not yet published**, so this does not work
 yet:
 
-    brew install brandon/saddle/saddle   # not available yet
+    brew install nighthawk-oss/saddle/saddle   # not available yet
 
 ## Create a profile
 

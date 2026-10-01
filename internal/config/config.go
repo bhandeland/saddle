@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/brandon/saddle/internal/profile"
+	"gitlab.com/nighthawk-oss/saddle/internal/profile"
 )
 
 // ProfilesDir returns the profile directory, honouring XDG_CONFIG_HOME.

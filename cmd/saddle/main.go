@@ -12,11 +12,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/brandon/saddle/internal/auth"
-	"github.com/brandon/saddle/internal/doctor"
-	"github.com/brandon/saddle/internal/render"
-	"github.com/brandon/saddle/internal/runtime"
-	"github.com/brandon/saddle/internal/session"
+	"gitlab.com/nighthawk-oss/saddle/internal/auth"
+	"gitlab.com/nighthawk-oss/saddle/internal/doctor"
+	"gitlab.com/nighthawk-oss/saddle/internal/render"
+	"gitlab.com/nighthawk-oss/saddle/internal/runtime"
+	"gitlab.com/nighthawk-oss/saddle/internal/session"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".

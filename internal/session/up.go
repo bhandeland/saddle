@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brandon/saddle/internal/auth"
-	"github.com/brandon/saddle/internal/config"
-	"github.com/brandon/saddle/internal/egress"
-	"github.com/brandon/saddle/internal/hostsvc"
-	"github.com/brandon/saddle/internal/macos"
-	"github.com/brandon/saddle/internal/profile"
-	"github.com/brandon/saddle/internal/render"
-	"github.com/brandon/saddle/internal/runtime"
-	"github.com/brandon/saddle/internal/worktree"
+	"gitlab.com/nighthawk-oss/saddle/internal/auth"
+	"gitlab.com/nighthawk-oss/saddle/internal/config"
+	"gitlab.com/nighthawk-oss/saddle/internal/egress"
+	"gitlab.com/nighthawk-oss/saddle/internal/hostsvc"
+	"gitlab.com/nighthawk-oss/saddle/internal/macos"
+	"gitlab.com/nighthawk-oss/saddle/internal/profile"
+	"gitlab.com/nighthawk-oss/saddle/internal/render"
+	"gitlab.com/nighthawk-oss/saddle/internal/runtime"
+	"gitlab.com/nighthawk-oss/saddle/internal/worktree"
 )
 
 type UpOptions struct {

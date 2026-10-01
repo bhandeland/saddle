@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/brandon/saddle/internal/macos"
+	"gitlab.com/nighthawk-oss/saddle/internal/macos"
 )
 
 type Result struct {

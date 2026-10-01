@@ -6,10 +6,10 @@ import (
 	"net"
 	"os"
 
-	"github.com/brandon/saddle/internal/egress"
-	"github.com/brandon/saddle/internal/hostsvc"
-	"github.com/brandon/saddle/internal/render"
-	"github.com/brandon/saddle/internal/runtime"
+	"gitlab.com/nighthawk-oss/saddle/internal/egress"
+	"gitlab.com/nighthawk-oss/saddle/internal/hostsvc"
+	"gitlab.com/nighthawk-oss/saddle/internal/render"
+	"gitlab.com/nighthawk-oss/saddle/internal/runtime"
 )
 
 // proxyPortFree reports whether addr can be bound, so attach can refuse

@@ -1,6 +1,6 @@
 package session
 
-import "github.com/brandon/saddle/internal/runtime"
+import "gitlab.com/nighthawk-oss/saddle/internal/runtime"
 
 // The anchor is deliberately tiny and deliberately idle. It is not a place
 // anything runs.

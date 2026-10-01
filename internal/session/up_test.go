@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brandon/saddle/internal/profile"
-	"github.com/brandon/saddle/internal/render"
+	"gitlab.com/nighthawk-oss/saddle/internal/profile"
+	"gitlab.com/nighthawk-oss/saddle/internal/render"
 )
 
 // nameRE pins the SessionName allowlist: lower-case ASCII letters and

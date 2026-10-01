@@ -1,14 +1,14 @@
 # Template only: this formula is not installable as-is. Once a real
 # v0.1.0 release exists (see `goreleaser release` in .goreleaser.yaml),
-# copy this file into the `brandon/homebrew-saddle` tap repo at
+# copy this file into the `nighthawk-oss/homebrew-saddle` tap repo at
 # `Formula/saddle.rb` and replace the `sha256` value below with the
 # checksum for `saddle_Darwin_arm64.tar.gz` from that release's
 # `checksums.txt`.
 
 class Saddle < Formula
   desc "Run Claude Code in a contained environment on macOS"
-  homepage "https://github.com/brandon/saddle"
-  url "https://github.com/brandon/saddle/releases/download/v0.1.0/saddle_Darwin_arm64.tar.gz"
+  homepage "https://gitlab.com/nighthawk-oss/saddle"
+  url "https://gitlab.com/nighthawk-oss/saddle/-/releases/v0.1.0/downloads/saddle_Darwin_arm64.tar.gz"
   sha256 "REPLACE_WITH_VALUE_FROM_checksums.txt"
   license "Apache-2.0"
 
